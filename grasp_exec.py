@@ -6,7 +6,7 @@ import time
 import cv2
 import numpy as np
 
-from common import connect, BaseClient, D405, move_joint, pose_to_matrix, in_safe_bounds, Base_pb2, grip_pos, grip_cmd, grip_ramp
+from common import connect, BaseClient, D405, move_joint, move_to_joints, pose_to_matrix, in_safe_bounds, Base_pb2, grip_pos, grip_cmd, grip_ramp
 from grasp_plan import build, plan_tilt, place_poses, ik_chain, P
 from scan import depth_to_points
 
@@ -26,12 +26,15 @@ class GraspAbort(RuntimeError):
     """A check failed BEFORE the object was touched."""
 
 
-def go(base, name, pos, eul, duration=None, soft=False):
+def go(base, name, pos, eul, duration=None, soft=False, q_deg=None):
     if not in_safe_bounds(*pos):
         raise RuntimeError(f'{name}: {np.round(pos, 3)} outside safe bounds')
     print(f'-> {name}: tool xyz {np.round(pos, 3)}, theta {np.round(eul, 1)}', flush=True)
     try:
-        move_joint(base, *pos, *eul, duration=duration, max_joint_deg=70)
+        if q_deg is not None:                                  # the joint solution the plan check already found: no second IK solve
+            move_to_joints(base, q_deg, duration=duration, max_joint_deg=360)
+        else:
+            move_joint(base, *pos, *eul, duration=duration, max_joint_deg=360)
     except RuntimeError as exc:
         if soft and 'details=55' not in str(exc):
             raise GraspAbort(f'{name}: the arm could not generate the move ({exc})')
@@ -109,7 +112,7 @@ def main(cam=None, media_dir=None):
             poses, G, table_z, wrist = build(g, T0, tilt_deg=tilt, flip=plan0.get('jaw_flip', False))
             print(f'tip offset {P["tip_offset"]} m, table z {table_z:.4f}, grasp point {G.round(4)}, wrist rotation {wrist:.0f} deg', flush=True)
             grip_ramp(base, 0.0, rate=0.3)                    # open smoothly
-            go(base, 'pre-grasp', *poses['pre_grasp'], soft=True)
+            go(base, 'pre-grasp', *poses['pre_grasp'], soft=True, q_deg=plan0['poses']['pre_grasp'].get('joints'))
             snap('10_pre_grasp')
 
             res, table_local, shift_xy = refine_grasp(base, cam, X, g)
@@ -134,18 +137,18 @@ def main(cam=None, media_dir=None):
                 if not ok3:
                     raise GraspAbort('neither the refined nor the far-range grasp is comfortably reachable - aborting before the descent')
                 chosen = ((tilt, poses3, G3, tz3, wr3, True, rows3), gg)
-            (tilt, poses, G, table_z, wrist, ok_all, _), g2 = chosen
+            (tilt, poses, G, table_z, wrist, ok_all, rows), g2 = chosen
             print(f'   refined grasp: approach tilt {tilt:+d} deg (re-searched with IK), wrist rotation {wrist:.0f} deg', flush=True)
             tip_z = poses['grasp'][0][2] + build.approach[2] * P['tip_offset']      # fingertip ends = tool origin + approach * tip offset
             print(f'   refined: table z {table_z:.4f}, fingertip ends will stop at z {tip_z:.4f} ({(tip_z - table_z) * 1000:.1f} mm above the table)', flush=True)
             if tip_z - table_z < 0.004:
                 raise GraspAbort('planned fingertip height is < 4 mm above the table - aborting before the descent')
-            go(base, 'pre-grasp (refined)', *poses['pre_grasp'], duration=DUR['pre_grasp_refined'], soft=True)
+            go(base, 'pre-grasp (refined)', *poses['pre_grasp'], duration=DUR['pre_grasp_refined'], soft=True, q_deg=rows['pre_grasp'][5])
 
             above = poses['grasp'][0] - build.approach * 0.04            # 4 cm back along the approach direction
             go(base, 'descend (stage 1)', above, poses['grasp'][1], duration=DUR['descend_stage1'])
             snap('11_pre_grasp_refined')
-            go(base, 'descend to grasp (slow)', *poses['grasp'], duration=DUR['descend_final'])
+            go(base, 'descend to grasp (slow)', *poses['grasp'], duration=DUR['descend_final'], q_deg=rows['grasp'][5])
             snap('12_at_grasp_pose')
 
             pos, stalled = grip_ramp(base, 1.0, rate=0.2)      # close smoothly until the fingers stall on the object
@@ -156,7 +159,7 @@ def main(cam=None, media_dir=None):
             snap('13_gripper_closed')
             if not contact:
                 raise GraspAbort('gripper closed on nothing - not lifting')
-            go(base, 'lift', *poses['lift'], duration=DUR['lift'])
+            go(base, 'lift', *poses['lift'], duration=DUR['lift'], q_deg=rows['lift'][5])
             snap('14_after_lift')
             held = grip_pos(base)
             print(f'   after lift gripper at {held:.2f} (was {pos:.2f}) -> {"HOLDING" if abs(held - pos) < 0.12 else "LOST?"}', flush=True)

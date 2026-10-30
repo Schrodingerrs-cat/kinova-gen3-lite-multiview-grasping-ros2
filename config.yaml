@@ -90,7 +90,7 @@ grasp:                        # Step 4 planning (grasp_plan.py)
   pre_grasp_height: 0.10      # m above the grasp point
   lift_height: 0.12
   max_joint_deg: 60.0
-  plan_max_joint_deg: 110      # the plan check rejects any pose chain that needs a bigger single-joint move (applies even with safety off)
+  plan_max_joint_deg: 360      # the plan check rejects any pose chain that needs a bigger single-joint move (360 = no limit)
 
 pick_all:                     # several objects: scan the table, pick one, place it at a free spot, rescan, repeat
   max_objects: 4
@@ -103,6 +103,7 @@ place:
   min_base_distance_m: 0.38   # and this far from the robot base axis
 
 execution:                    # grasp_exec.py
+  refine_max_joint_deg: 360    # the refined pre-grasp may need at most this big a single-joint move (360 = no limit)
   place_extra_height_m: 0.04  # carry the object this much higher than the normal lift
   max_correction_m: 0.08      # abort only if the close-range centre differs from the far-range plan by more than this (the dense close-range view is the more accurate one)
   pos_tol_m: 0.006            # abort if a move ends farther than this from its target

@@ -155,10 +155,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--run', help='replay a saved run folder (runs/<ts>)')
     ap.add_argument('--object', type=int, default=0, help='with --run: which object folder (0-based)')
+    ap.add_argument('--clear', action='store_true', help='empty all /hw7 topics (clears RViz) and exit')
     a = ap.parse_args()
     rclpy.init()
     node = Node('hw7_viz')
     v = Viz(node)
+    if a.clear:
+        v.clear()
+        t0 = time.time()
+        while time.time() - t0 < 2:
+            rclpy.spin_once(node, timeout_sec=0.1)
+        return
     if a.run:
         od = os.path.join(a.run, f'object_{a.object}')
         publish_set(v, sorted(glob.glob(os.path.join(a.run, 'scan/02_pointclouds/raw_views_npz/scan_*.npz'))), os.path.join(od, '02_pointclouds/stages'),

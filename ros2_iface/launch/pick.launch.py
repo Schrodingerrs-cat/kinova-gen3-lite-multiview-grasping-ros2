@@ -18,7 +18,7 @@ NODES = os.path.join(ROOT, 'ros2_iface', 'hw7_nodes.py')
 
 def generate_launch_description():
     def proc(name, cmd):
-        return ExecuteProcess(cmd=cmd, cwd=ROOT, output='screen', name=name)
+        return ExecuteProcess(cmd=cmd, cwd=ROOT, output='screen', name=name, additional_env={'PYTHONUNBUFFERED': '1'})
     wait = 'for i in $(seq 1 90); do [ -f /tmp/hw7_camera_ready ] && break; sleep 1; done; exec '       # open the camera only once the keepalive has the streams flowing
     stage = [proc(r, ['bash', '-c', wait + f'{PY} {NODES} {r}']) for r in ('scan', 'perception', 'planner', 'executor')]
     keepalive = proc('camera_keepalive', ['/usr/bin/python3', os.path.join(ROOT, 'ros2_iface', 'keepalive.py')])

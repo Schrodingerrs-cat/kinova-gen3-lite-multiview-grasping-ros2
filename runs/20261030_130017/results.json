@@ -1,0 +1,32 @@
+{
+ "run": "20261030_130017",
+ "status": "Done: 2 object(s) picked and put back from one scan",
+ "picked": 2,
+ "cycles": [
+  {
+   "object": 0,
+   "n_objects": 2,
+   "target": [
+    0.2829156867399475,
+    0.22719727287161354,
+    0.014757880107150737
+   ],
+   "status": "PICK + LIFT + RELEASE COMPLETE (place_back)"
+  },
+  {
+   "object": 1,
+   "n_objects": 2,
+   "target": [
+    0.5030821111222075,
+    -0.07500874948532342,
+    0.011396992279609523
+   ],
+   "status": "PICK + LIFT + RELEASE COMPLETE (place_back)"
+  },
+  {
+   "object": 2,
+   "n_objects": null,
+   "status": "NO_MORE_OBJECTS"
+  }
+ ]
+}
