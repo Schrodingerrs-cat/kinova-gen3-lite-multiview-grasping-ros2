@@ -27,6 +27,12 @@ A full run on the real arm: the scan, then both objects on the table (a soup can
 <img src="media/view_poses_and_clouds.png" width="32%"> <img src="media/object_clusters.png" width="32%"> <img src="media/grasp_points.png" width="32%">
 </p>
 
+**RViz (live point clouds):** the scan, merged scene, table plane (blue), object clusters (red / green target) and grasp markers are published as ROS topics and shown in RViz together with the robot model. Full screen recording of the run: [`media/rviz_pointclouds.mp4`](media/rviz_pointclouds.mp4).
+
+![RViz during the run: merged cloud, table plane, objects, target and grasp, with the arm moving](media/rviz_demo.gif)
+
+![RViz frames: empty scene, scan and merged cloud, grasp markers](media/rviz_stages.jpg)
+
 **Pick and put back:** pre-grasp, at the grasp pose, after the lift, placed back on the table (top row: soup can, bottom row: gray block).
 
 ![pick sequence](media/pick_sequence.jpg)

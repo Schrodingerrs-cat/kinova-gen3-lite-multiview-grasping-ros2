@@ -108,24 +108,28 @@ def ik_chain(base, poses, q_start, cap=None):
 
 
 def plan_tilt(base, g, T_start, q_start, tip=None, table_z=None, verbose=True, cap=None):
-    """Search the approach tilt about the jaw axis for the first one whose pose chain passes IK."""
-    chosen = None
-    for flip in (False, True):                                                  # jaw direction needing the least wrist rotation first
+    """For each jaw direction find the first approach tilt whose pose chain passes IK, then keep the direction needing the smaller joint move."""
+    first, found = None, []
+    for flip in (False, True):
         for tilt in P['tilt_candidates_deg']:
             poses, G, tz, wrist = build(g, T_start, tip, table_z=table_z, tilt_deg=tilt, flip=flip)
             ok_all, rows = ik_chain(base, poses, q_start, cap)
-            if chosen is None:
-                chosen = (tilt, poses, G, tz, wrist, ok_all, rows)              # keep the first (tilt 0) for the failure report
-                plan_tilt.flip = flip
+            cand = (tilt, poses, G, tz, wrist, ok_all, rows)
+            if first is None:
+                first = (cand, flip)                                            # kept for the failure report
             if ok_all:
-                chosen = (tilt, poses, G, tz, wrist, ok_all, rows)
-                plan_tilt.flip = flip
+                found.append((max(r[3] for r in rows.values()), flip, cand))
                 break
             if verbose:
                 print(f'  {"flipped " if flip else ""}approach tilt {tilt:+d} deg: not feasible ({", ".join(n for n, r in rows.items() if not r[4])} fail)', flush=True)
-        if chosen[5]:
-            break
-    build(g, T_start, tip, table_z=table_z, tilt_deg=chosen[0], flip=plan_tilt.flip)     # leaves build.approach set for the chosen tilt
+    if found:
+        step, flip, chosen = min(found, key=lambda f: f[0])
+        if verbose and len(found) > 1:
+            print(f'  jaw directions feasible: ' + ', '.join(f'{"flipped" if f[1] else "normal"} (max joint step {f[0]:.0f} deg)' for f in found) + f' -> using the {"flipped" if flip else "normal"} one', flush=True)
+    else:
+        chosen, flip = first
+    plan_tilt.flip = flip
+    build(g, T_start, tip, table_z=table_z, tilt_deg=chosen[0], flip=flip)       # leaves build.approach set for the chosen tilt
     return chosen
 
 
