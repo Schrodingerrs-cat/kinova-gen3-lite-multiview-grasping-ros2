@@ -19,7 +19,8 @@ from robot_ros import Robot, COLOR, DEPTH, INFO   # noqa: E402
 
 from cfg import CFG as _CFG   # noqa: E402
 
-STALL_S = 6.0                # a camera grab that gets no frame for this long counts as a stall
+GRAB_TRIES = 3
+STALL_S = 4.0                # a camera grab that gets no frame for this long counts as a stall
 GRIP_CLOSED = 0.81           # finger joint (rad) of a fully closed, empty gripper, measured in the air (0 = open)
 SPEED = float(_CFG.get('motion', {}).get('speed_factor', 1.0))
 _S = _CFG['safety']
@@ -229,18 +230,23 @@ class D405:
                 raise RuntimeError(f'camera stalled: no frames for {STALL_S:.0f} s')
             time.sleep(0.05)
         else:
-            self._subscribe(True)
-            try:
-                t0 = time.time()
-                while True:
-                    self._ex.spin_once(timeout_sec=0.05)
-                    with self._lock:
-                        if self._seq >= max(1, warmup) and self._depth is not None and self.K is not None:
-                            break
-                    if time.time() - t0 > STALL_S:
-                        raise RuntimeError(f'camera stalled: no frames for {STALL_S:.0f} s')
-            finally:
-                self._unsubscribe()
+            for attempt in range(GRAB_TRIES):                      # a fresh subscription sometimes takes a while to match: retry with new ones
+                self._subscribe(True)
+                try:
+                    t0 = time.time()
+                    while True:
+                        self._ex.spin_once(timeout_sec=0.05)
+                        with self._lock:
+                            if self._seq >= max(1, warmup) and self._depth is not None and self.K is not None:
+                                break
+                        if time.time() - t0 > STALL_S:
+                            raise TimeoutError
+                    break
+                except TimeoutError:
+                    if attempt == GRAB_TRIES - 1:
+                        raise RuntimeError(f'camera stalled: no frames for {STALL_S:.0f} s ({GRAB_TRIES} tries)')
+                finally:
+                    self._unsubscribe()
         with self._lock:
             return self._color.copy(), (self._depth.copy() if self._depth is not None else None)
 

@@ -81,7 +81,7 @@ Keep the e-stop in reach and the workspace clear. Open each terminal in the repo
 
 What you see: the arm goes to the scan pose and visits the 10 views (a cloud per view appears in RViz), then for each object (nearest the base first) it plans, picks, lifts, puts it back and releases, and finally returns to the scan pose. Output (log, video, clouds, figures, per-step images) is saved in `runs/<timestamp>/`.
 
-**Stop:** Ctrl-C in terminal 6 (or the e-stop). **Shut down:** Ctrl-C terminals 3, 2, 1.
+**Stop:** Ctrl-C in terminal 6 (or the e-stop). **Back to the home pose** (any time, with terminals 1 and 2 running): `.venv/bin/python ros2_iface/go_home.py`. **Shut down:** Ctrl-C terminals 3, 2, 1.
 
 Without the robot you can still look at a saved run: `.venv/bin/python ros2_iface/viz_node.py --run "runs/old runs/20261029_210833" --object 1`, then `rviz2 -d ros2_iface/hw7.rviz`.
 
