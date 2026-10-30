@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-RBE 595 HW6/HW7: grasping with multi-view eye-in-hand point clouds on a real Kinova Gen3 Lite with a wrist RealSense D405. Runs on ROS 2 Humble (`ros2_kortex` driver, MoveIt, `realsense2_camera`) through `ros2_iface/`; the Kortex-API code was removed (git tag `pre-ros-nodes` has the last version before the ROS node split). Open3D/NumPy/SciPy for point clouds. It must work for ANY object shape/size/colour and several objects anywhere on the table: no dimension or colour assumptions.
+Repo `kinova-gen3-lite-multiview-grasping-ros2` (RBE 595 HW6/HW7): grasping with multi-view eye-in-hand point clouds on a real Kinova Gen3 Lite with a wrist RealSense D405. Runs on ROS 2 Humble (`ros2_kortex` driver, MoveIt, `realsense2_camera`) through `ros2_iface/`; the Kortex-API code was removed (git tag `pre-ros-nodes` has the last version before the ROS node split). Open3D/NumPy/SciPy for point clouds. It must work for ANY object shape/size/colour and several objects anywhere on the table: no dimension or colour assumptions.
 
 There is no build, lint or test suite. Everything is scripts run against the real arm (venv: `source .venv/bin/activate`; arm at 192.168.1.10).
 

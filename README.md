@@ -1,7 +1,17 @@
-# HW7: grasping with multi-view eye-in-hand point clouds on a Kinova Gen3 Lite (ROS 2)
+# kinova-gen3-lite-multiview-grasping-ros2
 
-Wrist-mounted RealSense D405, Kinova Gen3 Lite, ROS 2 Humble (`ros2_kortex` driver, MoveIt, `realsense2_camera`). The perception and grasp code is plain
-Python (NumPy / SciPy / Open3D); `ros2_iface/` is the hardware layer.
+Multi-view eye-in-hand point cloud grasping on a **Kinova Gen3 Lite** with a wrist-mounted **RealSense D405**, running on **ROS 2 Humble** (`ros2_kortex` driver, MoveIt, `realsense2_camera`). The arm scans the table from 10 fixed viewpoints, merges the point clouds, removes the table plane, clusters the objects, synthesises an antipodal grasp for each one and picks it up and puts it back. No assumptions about object shape, size or colour.
+
+The perception and grasp code is plain Python (NumPy / SciPy / Open3D); each stage runs as a ROS 2 node and the point clouds, grasp and plan are published as `/hw7/*` topics for RViz. Course context: RBE 595 homework 6 (point cloud grasp synthesis) and homework 7 (the real robot with multi-view eye-in-hand clouds).
+
+```bash
+git clone https://github.com/Schrodingerrs-cat/kinova-gen3-lite-multiview-grasping-ros2.git
+cd kinova-gen3-lite-multiview-grasping-ros2
+```
+
+The demo run (wrist video, point clouds, per-object figures and step images) is in `runs/old runs/20261029_210833/`.
+
+Known limitations: the views still disagree on the table height by up to about 30 mm (hand-eye calibration error), so close-range refinement does most of the work for the final grasp; very thin or dark objects can be missed or fail the gripper-contact check.
 
 ## Pipeline (ROS 2 nodes)
 
@@ -30,7 +40,7 @@ The service response message is JSON `{"info": ..., "log": ...}`. Works for any 
 
 ## Run it, terminal by terminal
 
-Keep the e-stop in reach and the workspace clear. Open each terminal in this folder and start them in this order.
+Keep the e-stop in reach and the workspace clear. Open each terminal in the repo folder and start them in this order.
 
 | # | terminal | command | ready when |
 |---|---|---|---|
