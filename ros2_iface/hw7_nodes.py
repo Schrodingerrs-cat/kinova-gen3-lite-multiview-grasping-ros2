@@ -58,11 +58,11 @@ def captured(fn):
 
 
 class StageNode(Node):
-    def __init__(self, name, service, handler, params=()):
+    def __init__(self, name, service, handler, params=(), clouds=(), grasp=False):
         super().__init__(name)
         for p, default in params:
             self.declare_parameter(p, default)
-        self.viz = Viz(self)
+        self.viz = Viz(self, clouds, grasp)
         self.create_service(Trigger, service, self._wrap(handler))
         self.get_logger().info(f'{service} ready')
 
@@ -77,7 +77,7 @@ class StageNode(Node):
 
 class ScanNode(StageNode):
     def __init__(self):
-        super().__init__('hw7_scan', '/hw7/scan', self.run, [('media_dir', '')])
+        super().__init__('hw7_scan', '/hw7/scan', self.run, [('media_dir', '')], clouds=('view_cloud', 'scan_views'))
         from common import D405
         self.cam, self.acc = D405(), []
 
@@ -100,7 +100,7 @@ class ScanNode(StageNode):
 
 class PerceptionNode(StageNode):
     def __init__(self):
-        super().__init__('hw7_perception', '/hw7/perceive', self.run, [('target', 0)])
+        super().__init__('hw7_perception', '/hw7/perceive', self.run, [('target', 0)], clouds=('scan_views', 'merged', 'table', 'objects', 'target'), grasp=True)
 
     def run(self):
         import perceive
@@ -112,7 +112,7 @@ class PerceptionNode(StageNode):
 
 class PlannerNode(StageNode):
     def __init__(self):
-        super().__init__('hw7_planner', '/hw7/plan', self.run)
+        super().__init__('hw7_planner', '/hw7/plan', self.run, grasp=True)
 
     def run(self):
         import grasp_plan

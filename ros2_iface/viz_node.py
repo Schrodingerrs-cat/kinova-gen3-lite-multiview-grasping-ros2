@@ -66,13 +66,15 @@ def thin(xyz, rgb):
 class Viz:
     """Latched /hw7/* publishers on an existing node."""
 
-    def __init__(self, node):
+    ALL = ('view_cloud', 'scan_views', 'merged', 'table', 'objects', 'target')
+
+    def __init__(self, node, topics=ALL, grasp=True):
         self.node = node
-        self.pubs = {n: node.create_publisher(PointCloud2, f'/hw7/{n}', LATCHED) for n in ('view_cloud', 'scan_views', 'merged', 'table', 'objects', 'target')}
-        self.grasp_pub = node.create_publisher(MarkerArray, '/hw7/grasp', LATCHED)
+        self.pubs = {n: node.create_publisher(PointCloud2, f'/hw7/{n}', LATCHED) for n in topics}
+        self.grasp_pub = node.create_publisher(MarkerArray, '/hw7/grasp', LATCHED) if grasp else None
 
     def cloud(self, name, xyz, rgb):
-        if len(xyz):
+        if len(xyz) and name in self.pubs:
             xyz, rgb = thin(xyz, rgb)
             self.pubs[name].publish(cloud_msg(xyz, rgb, self.node.get_clock().now().to_msg()))
 
@@ -101,7 +103,8 @@ class Viz:
             o = np.array(plan['poses']['grasp']['xyz'])
             for j, col in enumerate(((1, 0, 0, 1), (0, 1, 0, 1), (0, 0, 1, 1))):
                 ax = marker(20 + j, Marker.ARROW, col, (0.004, 0.008, 0.0)); ax.points = [pt(o), pt(o + Rg[:, j] * 0.05)]; arr.markers.append(ax)
-        self.grasp_pub.publish(arr)
+        if self.grasp_pub:
+            self.grasp_pub.publish(arr)
 
 
 def load_json(path):

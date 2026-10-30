@@ -130,8 +130,6 @@ def plan_tilt(base, g, T_start, q_start, tip=None, table_z=None, verbose=True, c
 
 
 def main(tip=None):
-    if tip is None and len(sys.argv) > 1:
-        tip = float(sys.argv[1])
     g = json.load(open('grasp.json'))
     with connect() as router:
         base = BaseClient(router)
@@ -190,4 +188,4 @@ def main(tip=None):
 
 
 if __name__ == '__main__':
-    main()
+    main(float(sys.argv[1]) if len(sys.argv) > 1 else None)

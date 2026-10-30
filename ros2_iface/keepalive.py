@@ -1,4 +1,5 @@
-"""Keeps the realsense2_camera streams running."""
+"""Keeps the realsense2_camera streams running: the node publishes the aligned depth only while somebody is subscribed, and it can take a while to start.
+Holds the subscriptions for the whole run (re-creating them if no frames arrive) and writes a flag file once colour + aligned depth are flowing."""
 import os
 import sys
 import time
@@ -12,21 +13,36 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_ros import COLOR, DEPTH   # noqa: E402
 
 FLAG = '/tmp/hw7_camera_ready'
+RAW = '/camera/camera/depth/image_rect_raw'
+INFO = '/camera/camera/aligned_depth_to_color/camera_info'
+RETRY_S = 6.0
+
+
+def subscribe(n, cnt):
+    inc = lambda k: (lambda m: cnt.__setitem__(k, cnt[k] + 1))
+    return [n.create_subscription(Image, COLOR, inc('color'), qos_profile_sensor_data),
+            n.create_subscription(Image, DEPTH, inc('depth'), qos_profile_sensor_data),
+            n.create_subscription(Image, RAW, inc('raw'), qos_profile_sensor_data),
+            n.create_subscription(CameraInfo, INFO, lambda m: None, qos_profile_sensor_data)]
+
+
 if os.path.exists(FLAG):
     os.remove(FLAG)
 rclpy.init()
-n = Node('hw6_camera_keepalive')
+n = Node('hw7_camera_keepalive')
 cnt = {'color': 0, 'depth': 0, 'raw': 0}
-RAW = '/camera/camera/depth/image_rect_raw'
-n.create_subscription(Image, COLOR, lambda m: cnt.__setitem__('color', cnt['color'] + 1), qos_profile_sensor_data)
-n.create_subscription(Image, DEPTH, lambda m: cnt.__setitem__('depth', cnt['depth'] + 1), qos_profile_sensor_data)
-n.create_subscription(Image, RAW, lambda m: cnt.__setitem__('raw', cnt['raw'] + 1), qos_profile_sensor_data)
-n.create_subscription(CameraInfo, '/camera/camera/aligned_depth_to_color/camera_info', lambda m: None, qos_profile_sensor_data)
+subs, t_sub = subscribe(n, cnt), time.time()
 try:
     while rclpy.ok():
         rclpy.spin_once(n, timeout_sec=0.2)
-        if cnt['color'] > 5 and cnt['depth'] > 5 and not os.path.exists(FLAG):
-            open(FLAG, 'w').write('ok')
+        if cnt['color'] > 5 and cnt['depth'] > 5:
+            if not os.path.exists(FLAG):
+                open(FLAG, 'w').write('ok')
+        elif time.time() - t_sub > RETRY_S:
+            for s in subs:
+                n.destroy_subscription(s)
+            subs, t_sub = subscribe(n, cnt), time.time()
+            print('no frames yet: re-subscribed', flush=True)
 finally:
     if os.path.exists(FLAG):
         os.remove(FLAG)
