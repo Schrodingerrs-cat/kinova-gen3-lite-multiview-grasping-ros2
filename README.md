@@ -17,18 +17,50 @@ Python (NumPy / SciPy / Open3D); `ros2_iface/` is the hardware layer.
 
 The service response message is JSON `{"info": ..., "log": ...}`. Works for any object shape / size / colour; parameters are in `config.yaml`.
 
-## Run
+## Setup (once)
 
-Every terminal: `source /opt/ros/humble/setup.bash && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` (all processes must use the same DDS).
+* Ubuntu 22.04, ROS 2 Humble, Kinova Gen3 Lite (USB to the PC, powered on), RealSense D405 on a **USB 3** port (USB 2 gives a stalling stream).
+* ROS packages: `sudo apt install ros-humble-kinova-gen3-lite-moveit-config ros-humble-kortex-bringup ros-humble-realsense2-camera ros-humble-rmw-cyclonedds-cpp ros-humble-moveit-ros-visualization` (`start_arm.sh` installs the MoveIt ones if missing).
+* Python env for the pipeline: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
+* Put this in `~/.bashrc` so every terminal uses the same DDS (mixing middlewares makes nodes silently fail to talk):
+  ```bash
+  source /opt/ros/humble/setup.bash
+  export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+  ```
 
-```bash
-./start_arm.sh                      # (repo parent) USB link + MoveIt/RViz
-ros2 launch kortex_bringup gen3_lite.launch.py robot_ip:=192.168.1.10 launch_rviz:=false     # arm driver
-ros2 launch realsense2_camera rs_launch.py align_depth.enable:=true pointcloud.enable:=true  # camera
-./run_ros.sh                        # the pipeline nodes + orchestrator; output in runs/<timestamp>/
-```
+## Run it, terminal by terminal
 
-Keep the e-stop in reach. Read-only check of the ROS side (no motion): `python3 ros2_iface/smoke_test.py`.
+Keep the e-stop in reach and the workspace clear. Open each terminal in this folder and start them in this order.
+
+| # | terminal | command | ready when |
+|---|---|---|---|
+| 1 | arm link + MoveIt | `./start_arm.sh` (asks for `sudo` once: gives the arm's USB network interface an IP, pings `192.168.1.10`, starts MoveIt + RViz) | RViz opens, log says "You can start planning now!" |
+| 2 | arm driver | `ros2 launch kortex_bringup gen3_lite.launch.py robot_ip:=192.168.1.10 launch_rviz:=false` | log shows "Configured and activated" for `joint_state_broadcaster`, `joint_trajectory_controller`, `gen3_lite_2f_gripper_controller` (takes ~10 s) |
+| 3 | camera | `ros2 launch realsense2_camera rs_launch.py align_depth.enable:=true pointcloud.enable:=true` | log shows the color / depth streams started |
+| 4 | check (no motion) | `python3 ros2_iface/smoke_test.py` | prints the joints, the tool position, a camera frame and "IK service up: True" |
+| 5 | viewer (optional) | `rviz2 -d ros2_iface/hw7.rviz` | robot, live camera cloud (tick it), and later the scan / objects / grasp |
+| 6 | **the pipeline** | `./run_ros.sh` | see below |
+
+`./run_ros.sh` starts one ROS 2 node per stage (scan, perception, planner, executor), the camera keepalive and the orchestrator in one terminal, runs, and shuts them down when it finishes. Arguments are passed to the orchestrator: `./run_ros.sh` = all objects, no countdown; `./run_ros.sh --single` = one object, with a 10 s countdown.
+
+What you see: the arm goes to the scan pose and visits the 10 views (a cloud per view appears in RViz), then for each object (nearest the base first) it plans, picks, lifts, puts it back and releases, and finally returns to the scan pose. Output (log, video, clouds, figures, per-step images) is saved in `runs/<timestamp>/`.
+
+**Stop:** Ctrl-C in terminal 6 (or the e-stop). **Shut down:** Ctrl-C terminals 3, 2, 1.
+
+Without the robot you can still look at a saved run: `.venv/bin/python ros2_iface/viz_node.py --run "runs/old runs/20261029_210833" --object 1`, then `rviz2 -d ros2_iface/hw7.rviz`.
+
+### If something goes wrong
+
+| symptom | cause / fix |
+|---|---|
+| a node waits forever, or services are "not available" | a terminal without `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`; close all and restart with the `~/.bashrc` lines |
+| "no camera frames" | camera node not running, or not started with `align_depth.enable:=true`; restart terminal 3 |
+| driver crashes with `RefreshFeedback` timeout / `sendto() failed ... 101` | the arm's USB link dropped (`ip -o link` shows no `enx...`); reseat the cable, rerun `./start_arm.sh`, restart the driver |
+| `ROBOT_IN_FAULT` / arm refuses to move | clear the fault from the arm's web page (`http://192.168.1.10`) or power-cycle the arm, then restart the driver |
+| `ros2 control list_controllers` hangs | the driver is not running, or on a different DDS |
+| camera stalls / low frame rate | use a USB 3 port and cable |
+
+Calibration (`calibration/hand_eye.json`) is the camera-to-tool transform; the scan views and home pose are in `calibration/table_views.json` and `calibration/scan_joints.json`. The tools that made them (Kortex API) are in `archive/`.
 
 ## Point clouds in ROS (RViz)
 
@@ -39,6 +71,7 @@ No robot needed: replay a saved run with `.venv/bin/python ros2_iface/viz_node.p
 ## Layout
 
 ```
+start_arm.sh          USB link to the arm + MoveIt/RViz
 run_ros.sh            ros2 launch of the whole pipeline
 run_pick.py           orchestrator node
 scan.py perceive.py grasp_plan.py grasp_exec.py     stage code used by the nodes

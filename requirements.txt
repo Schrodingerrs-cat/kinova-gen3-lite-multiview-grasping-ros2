@@ -1,0 +1,6 @@
+numpy>=2.0
+scipy
+open3d==0.18.0
+opencv-python
+matplotlib
+pyyaml
