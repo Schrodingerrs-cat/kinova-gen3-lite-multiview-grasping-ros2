@@ -1,0 +1,173 @@
+Visualization Manager:
+  Class: ''
+  Displays:
+  - Class: rviz_default_plugins/Grid
+    Name: Grid
+    Enabled: true
+    Plane Cell Count: 20
+    Cell Size: 0.1
+    Value: true
+  - Class: rviz_default_plugins/TF
+    Name: TF
+    Enabled: true
+    Show Names: false
+    Marker Scale: 0.15
+    Value: true
+  - Class: rviz_default_plugins/RobotModel
+    Name: RobotModel
+    Enabled: true
+    Description Topic:
+      Depth: 1
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /robot_description
+    Value: true
+  - Class: rviz_default_plugins/PointCloud2
+    Name: Live camera cloud
+    Enabled: false
+    Style: Points
+    Size (Pixels): 1
+    Alpha: 1
+    Color Transformer: RGB8
+    Channel Name: rgb
+    Use Fixed Frame: true
+    Use rainbow: false
+    Invert Rainbow: false
+    Topic:
+      Depth: 1
+      Durability Policy: Transient Local
+      Filter size: 10
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /camera/camera/depth/color/points
+    Value: false
+  - Class: rviz_default_plugins/PointCloud2
+    Name: Scan views (all)
+    Enabled: false
+    Style: Points
+    Size (Pixels): 2
+    Alpha: 1
+    Color Transformer: RGB8
+    Channel Name: rgb
+    Use Fixed Frame: true
+    Use rainbow: false
+    Invert Rainbow: false
+    Topic:
+      Depth: 1
+      Durability Policy: Transient Local
+      Filter size: 10
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /hw7/scan_views
+    Value: false
+  - Class: rviz_default_plugins/PointCloud2
+    Name: Merged scene
+    Enabled: true
+    Style: Points
+    Size (Pixels): 2
+    Alpha: 1
+    Color Transformer: RGB8
+    Channel Name: rgb
+    Use Fixed Frame: true
+    Use rainbow: false
+    Invert Rainbow: false
+    Topic:
+      Depth: 1
+      Durability Policy: Transient Local
+      Filter size: 10
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /hw7/merged
+    Value: true
+  - Class: rviz_default_plugins/PointCloud2
+    Name: Table plane
+    Enabled: true
+    Style: Points
+    Size (Pixels): 2
+    Alpha: 1
+    Color Transformer: RGB8
+    Channel Name: rgb
+    Use Fixed Frame: true
+    Use rainbow: false
+    Invert Rainbow: false
+    Topic:
+      Depth: 1
+      Durability Policy: Transient Local
+      Filter size: 10
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /hw7/table
+    Value: true
+  - Class: rviz_default_plugins/PointCloud2
+    Name: Objects
+    Enabled: true
+    Style: Points
+    Size (Pixels): 4
+    Alpha: 1
+    Color Transformer: RGB8
+    Channel Name: rgb
+    Use Fixed Frame: true
+    Use rainbow: false
+    Invert Rainbow: false
+    Topic:
+      Depth: 1
+      Durability Policy: Transient Local
+      Filter size: 10
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /hw7/objects
+    Value: true
+  - Class: rviz_default_plugins/PointCloud2
+    Name: Target
+    Enabled: true
+    Style: Points
+    Size (Pixels): 5
+    Alpha: 1
+    Color Transformer: RGB8
+    Channel Name: rgb
+    Use Fixed Frame: true
+    Use rainbow: false
+    Invert Rainbow: false
+    Topic:
+      Depth: 1
+      Durability Policy: Transient Local
+      Filter size: 10
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /hw7/target
+    Value: true
+  - Class: rviz_default_plugins/MarkerArray
+    Name: Grasp
+    Enabled: true
+    Namespaces: {}
+    Topic:
+      Depth: 1
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /hw7/grasp
+    Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 30; 30; 30
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Tools:
+  - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Select
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 1.4
+      Focal Point:
+        X: 0.4
+        Y: 0.0
+        Z: 0.0
+      Pitch: 0.8
+      Yaw: 3.4
+      Value: Orbit (rviz)
+Window Geometry:
+  Height: 900
+  Width: 1400

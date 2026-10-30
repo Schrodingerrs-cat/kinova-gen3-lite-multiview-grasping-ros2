@@ -26,6 +26,12 @@ ros2 launch realsense2_camera rs_launch.py align_depth.enable:=true pointcloud.e
 
 Keep the e-stop in reach. Read-only check of the ROS side (no motion): `python3 ros2_iface/smoke_test.py`.
 
+## Point clouds in ROS (RViz)
+
+`ros2_iface/viz_node.py` publishes the pipeline's clouds and grasp as latched topics in `base_link`: `/hw7/scan_views`, `/hw7/merged`, `/hw7/table`, `/hw7/objects` (one colour per cluster), `/hw7/target`, and `/hw7/grasp` (centroid, grasp points, approach, pre-grasp/grasp/lift path). `run_ros.sh` starts it for a live run; open RViz with `rviz2 -d ros2_iface/hw7.rviz`.
+
+No robot needed: replay a saved run with `.venv/bin/python ros2_iface/viz_node.py --run "runs/old runs/20261029_210833" --object 1`.
+
 ## Layout
 
 ```
@@ -33,7 +39,7 @@ run_ros.sh            starts the camera keepalive and run_pick.py with the ROS b
 run_pick.py           orchestrator: scan once, then perceive/plan/execute per object
 scan.py perceive.py grasp_plan.py grasp_exec.py     pipeline stages
 common.py cfg.py      shared helpers, config loader (HW6_BACKEND=ros2 switches the hardware layer)
-ros2_iface/           robot_ros.py (joint states, TF, FollowJointTrajectory, MoveIt IK/Cartesian path, gripper, camera topics), backend.py, keepalive.py, smoke_test.py
+ros2_iface/           robot_ros.py (joint states, TF, FollowJointTrajectory, MoveIt IK/Cartesian path, gripper, camera topics), backend.py, keepalive.py, viz_node.py + hw7.rviz (point clouds in RViz), smoke_test.py
 calibration/          hand_eye.json, table_views.json, scan_joints.json (home pose; old ones commented), tag_in_base.json, tip_offset_measured.json
 runs/old runs/<ts>/   one demo run: video, point clouds, figures, per-step images, log
 archive/              the earlier Kortex-API version and old calibration (not used)

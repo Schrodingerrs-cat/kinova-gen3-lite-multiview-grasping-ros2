@@ -6,7 +6,9 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp HW6_BACKEND=ros2
 cd "$(dirname "$0")"
 /usr/bin/python3 ros2_iface/keepalive.py &
 KEEP=$!
-trap 'kill $KEEP 2>/dev/null' EXIT
+.venv/bin/python ros2_iface/viz_node.py &      # point clouds + grasp markers for RViz (rviz2 -d ros2_iface/hw7.rviz)
+VIZ=$!
+trap 'kill $KEEP $VIZ 2>/dev/null' EXIT
 echo "waiting for camera streams (colour + aligned depth)..."
 for i in $(seq 1 90); do [ -f /tmp/hw6_camera_ready ] && break; sleep 1; done
 [ -f /tmp/hw6_camera_ready ] || { echo "camera streams did not start: is realsense2_camera running with align_depth.enable:=true ?"; exit 1; }
