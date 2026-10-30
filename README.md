@@ -9,9 +9,29 @@ git clone https://github.com/Schrodingerrs-cat/kinova-gen3-lite-multiview-graspi
 cd kinova-gen3-lite-multiview-grasping-ros2
 ```
 
-The demo run (wrist video, point clouds, per-object figures and step images) is in `runs/old runs/20261029_210833/`.
-
 Known limitations: the views still disagree on the table height by up to about 30 mm (hand-eye calibration error), so close-range refinement does most of the work for the final grasp; very thin or dark objects can be missed or fail the gripper-contact check.
+
+## Demo
+
+Wrist-camera view of a full run (20x speed): the scan, then picking an object and putting it back. Full video: [`wrist_camera.mp4`](runs/old%20runs/20261029_210833/video/wrist_camera.mp4).
+
+![demo run, wrist camera at 20x](media/demo.gif)
+
+**Scan:** colour images from some of the 10 viewpoints (straight-down sweep and oblique views).
+
+![scan views](media/scan_views.jpg)
+
+**Point clouds:** the 10 views merged in the base frame with the camera positions (left), the segmented object clusters with the target highlighted (middle), and the antipodal grasp points on the target's cloud (right).
+
+<p>
+<img src="media/view_poses_and_clouds.png" width="32%"> <img src="media/object_clusters.png" width="32%"> <img src="media/grasp_points.png" width="32%">
+</p>
+
+**Pick and put back:** pre-grasp, at the grasp pose, after the lift, placed back on the table.
+
+![pick sequence](media/pick_sequence.jpg)
+
+All figures and per-step images of that run are in `runs/old runs/20261029_210833/`. The same clouds can be viewed live in RViz (see below).
 
 ## Pipeline (ROS 2 nodes)
 
