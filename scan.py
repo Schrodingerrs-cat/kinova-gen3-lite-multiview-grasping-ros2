@@ -6,8 +6,8 @@ import time
 
 import numpy as np
 
-from cfg import CFG, HAND_EYE, ROOT
-from common import connect, BaseClient, D405, move_to_joints, pose_to_matrix, _wrap180
+from cfg import CFG, HAND_EYE, ROOT, load_json
+from common import connect, BaseClient, D405, move_joint, move_to_joints, lift_up, go_home, pose_to_matrix, _wrap180
 
 _V = CFG['viewpoints']
 SCAN_POSE = _V['scan_pose']
@@ -28,7 +28,52 @@ def depth_to_points(depth, color, K):
     return np.column_stack([x, y, z[ok]]), rgb
 
 
-def main(cam=None, media_dir=None, plan_only=False):
+SCAN_JOINTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calibration', 'scan_joints.json')
+
+
+def to_scan_pose(b):
+    """Get to the observation pose from wherever the arm was left."""
+    p = b.GetMeasuredCartesianPose()
+    print(f'  arm at ({p.x:.3f}, {p.y:.3f}, {p.z:.3f}) m', flush=True)
+    if p.z < 0.15:
+        print('  lifting straight up first', flush=True)
+        try:
+            lift_up(b, dz=0.17 - p.z)
+        except Exception as exc:
+            print(f'  straight lift failed ({type(exc).__name__}), trying other routes', flush=True)
+    steps = []
+    if os.path.exists(SCAN_JOINTS_FILE):
+        sj = load_json(SCAN_JOINTS_FILE)
+        steps.append(('joint-space move to the saved scan joints', lambda: move_to_joints(b, sj, duration=8.0, max_joint_deg=200)))
+    def rise_then_ik():
+        p2 = b.GetMeasuredCartesianPose()
+        if p2.z < 0.26:
+            for zt in (0.28, 0.24, 0.20, 0.16):
+                if zt <= p2.z + 0.02:
+                    continue
+                try:
+                    move_joint(b, p2.x, p2.y, zt, p2.theta_x, p2.theta_y, p2.theta_z, duration=5.0, max_joint_deg=60)
+                    break
+                except Exception as exc:
+                    print(f'  cannot rise to z={zt} ({type(exc).__name__}), trying lower', flush=True)
+        move_joint(b, *SCAN_POSE, duration=8.0, max_joint_deg=200)
+    steps.append(('rise, then IK move to the scan pose', rise_then_ik))
+    steps.append(('arm Home action, then IK move to the scan pose', lambda: (go_home(b), move_joint(b, *SCAN_POSE, duration=8.0, max_joint_deg=200))))
+    for name, fn in steps:
+        try:
+            fn()
+            print(f'  scan pose reached ({name})', flush=True)
+            break
+        except Exception as exc:
+            print(f'  {name}: failed ({type(exc).__name__})', flush=True)
+    else:
+        raise RuntimeError('could not reach the scan pose from the current arm pose')
+    if not os.path.exists(SCAN_JOINTS_FILE):
+        json.dump([a.value for a in b.GetMeasuredJointAngles().joint_angles], open(SCAN_JOINTS_FILE, 'w'))
+        print(f'  saved the scan joints to {os.path.relpath(SCAN_JOINTS_FILE)}', flush=True)
+
+
+def main(cam=None, media_dir=None, plan_only=False, on_view=None):
     os.makedirs('scans', exist_ok=True)
     X = np.array(json.load(open(HAND_EYE)))
     own_cam = cam is None
@@ -69,6 +114,8 @@ def main(cam=None, media_dir=None, plan_only=False):
                     poses.append(dict(index=len(names) - 1, name=v['name'], T_base_cam=T.tolist(), T_base_tool=T_bt.tolist(), tilt_deg=v['tilt_deg'], tilt_axis=v['tilt_axis']))
                     json.dump(poses, open(pf, 'w'), indent=1)
                 print(f'  view {len(names)}/{len(views)} {v["name"]}: {len(pts)} points', flush=True)
+                if on_view:
+                    on_view(v['name'], (pts @ T[:3, :3].T + T[:3, 3]), rgb)
 
             try:
                 for k, v in enumerate(views):

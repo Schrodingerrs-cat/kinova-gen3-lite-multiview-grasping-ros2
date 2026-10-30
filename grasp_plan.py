@@ -129,8 +129,9 @@ def plan_tilt(base, g, T_start, q_start, tip=None, table_z=None, verbose=True, c
     return chosen
 
 
-def main():
-    tip = float(sys.argv[1]) if len(sys.argv) > 1 else None
+def main(tip=None):
+    if tip is None and len(sys.argv) > 1:
+        tip = float(sys.argv[1])
     g = json.load(open('grasp.json'))
     with connect() as router:
         base = BaseClient(router)
@@ -185,6 +186,7 @@ def main():
         except Exception as exc:
             print('(pose figure skipped:', repr(exc), ')')
         print('PLAN OK' if ok_all else 'PLAN HAS PROBLEMS')
+        return ok_all
 
 
 if __name__ == '__main__':

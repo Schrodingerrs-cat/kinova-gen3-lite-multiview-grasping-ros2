@@ -63,19 +63,21 @@ def thin(xyz, rgb):
     return xyz, rgb
 
 
-class Viz(Node):
-    def __init__(self):
-        super().__init__('hw7_viz')
-        self.pubs = {n: self.create_publisher(PointCloud2, f'/hw7/{n}', LATCHED) for n in ('scan_views', 'merged', 'table', 'objects', 'target')}
-        self.grasp_pub = self.create_publisher(MarkerArray, '/hw7/grasp', LATCHED)
+class Viz:
+    """Latched /hw7/* publishers on an existing node."""
+
+    def __init__(self, node):
+        self.node = node
+        self.pubs = {n: node.create_publisher(PointCloud2, f'/hw7/{n}', LATCHED) for n in ('view_cloud', 'scan_views', 'merged', 'table', 'objects', 'target')}
+        self.grasp_pub = node.create_publisher(MarkerArray, '/hw7/grasp', LATCHED)
 
     def cloud(self, name, xyz, rgb):
         if len(xyz):
             xyz, rgb = thin(xyz, rgb)
-            self.pubs[name].publish(cloud_msg(xyz, rgb, self.get_clock().now().to_msg()))
+            self.pubs[name].publish(cloud_msg(xyz, rgb, self.node.get_clock().now().to_msg()))
 
     def grasp(self, g, plan):
-        arr, now = MarkerArray(), self.get_clock().now().to_msg()
+        arr, now = MarkerArray(), self.node.get_clock().now().to_msg()
 
         def marker(i, kind, rgba, scale):
             m = Marker(); m.header = Header(frame_id=FRAME, stamp=now); m.ns, m.id, m.type, m.action = 'grasp', i, kind, Marker.ADD
@@ -141,15 +143,16 @@ def main():
     ap.add_argument('--object', type=int, default=0, help='with --run: which object folder (0-based)')
     a = ap.parse_args()
     rclpy.init()
-    v = Viz()
+    node = Node('hw7_viz')
+    v = Viz(node)
     if a.run:
         od = os.path.join(a.run, f'object_{a.object}')
         publish_set(v, sorted(glob.glob(os.path.join(a.run, 'scan/02_pointclouds/raw_views_npz/scan_*.npz'))), os.path.join(od, '02_pointclouds/stages'),
                     os.path.join(od, '04_execution/grasp.json'), os.path.join(od, '04_execution/plan.json'))
-        v.get_logger().info(f'replaying {a.run} object {a.object}: topics /hw7/* (frame {FRAME}); Ctrl-C to stop')
-        rclpy.spin(v)
+        node.get_logger().info(f'replaying {a.run} object {a.object}: topics /hw7/* (frame {FRAME}); Ctrl-C to stop')
+        rclpy.spin(node)
         return
-    v.get_logger().info('watching scans/, pointclouds/, grasp.json, plan.json; topics /hw7/*')
+    node.get_logger().info('watching scans/, pointclouds/, grasp.json, plan.json; topics /hw7/*')
     seen = None
     while rclpy.ok():
         files = glob.glob('scans/scan_*.npz') + glob.glob('pointclouds/*.ply') + ['grasp.json', 'plan.json']
@@ -159,8 +162,8 @@ def main():
             try:
                 publish_set(v, sorted(glob.glob('scans/scan_*.npz')), 'pointclouds', 'grasp.json', 'plan.json')
             except Exception as exc:
-                v.get_logger().warn(f'skipped a half-written file ({exc})')
-        rclpy.spin_once(v, timeout_sec=1.0)
+                node.get_logger().warn(f'skipped a half-written file ({exc})')
+        rclpy.spin_once(node, timeout_sec=1.0)
 
 
 if __name__ == '__main__':

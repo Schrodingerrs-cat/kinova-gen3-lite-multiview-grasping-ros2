@@ -1,190 +1,38 @@
-"""Shared helpers: arm, camera, motion and gripper (Kortex API; ROS 2 via ros2_iface)."""
+"""Shared helpers: ROS 2 arm / camera access, poses, safety bounds, motion and gripper (ros2_kortex + MoveIt + realsense2_camera)."""
+import itertools
 import os
 import sys
-
-sys.path.insert(0, '/home/aryans-cat/Documents/GitHub/VBRM_insertion/Kinova-kortex2_Gen3_G3L/api_python/examples')
-
-import cv2
-import numpy as np
-import pyrealsense2 as rs
-from scipy.spatial.transform import Rotation as R
-
-from kortex_api.autogen.client_stubs.BaseClientRpc import BaseClient
-from utilities import DeviceConnection
-
-ARM_IP = '192.168.1.10'
-CREDENTIALS = ('admin', 'admin')
-
-TAG_DICT = cv2.aruco.DICT_4X4_50
-TAG_ID = 0
-TAG_SIZE = 0.100  # m
-
-COLOR_W, COLOR_H, COLOR_FPS = 1280, 720, 15
-
-
-def connect():
-    return DeviceConnection(ARM_IP, port=DeviceConnection.TCP_PORT, credentials=CREDENTIALS)
-
-
-def pose_to_matrix(p):
-    """Kortex tool pose."""
-    T = np.eye(4)
-    T[:3, :3] = R.from_euler('xyz', [p.theta_x, p.theta_y, p.theta_z], degrees=True).as_matrix()
-    T[:3, 3] = [p.x, p.y, p.z]
-    return T
-
-
-def measured_tool_matrix(base: BaseClient):
-    return pose_to_matrix(base.GetMeasuredCartesianPose())
-
-
-class D405:
-    """Color + aligned depth stream with the colour intrinsics."""
-
-    def __init__(self):
-        for fps in (COLOR_FPS, 5):                                    # USB 2.1 links only carry 1280x720 at 5 fps
-            self.pipe = rs.pipeline()
-            cfg = rs.config()
-            cfg.enable_stream(rs.stream.color, COLOR_W, COLOR_H, rs.format.bgr8, fps)
-            cfg.enable_stream(rs.stream.depth, COLOR_W, COLOR_H, rs.format.z16, fps)
-            self.cfg, self.fps = cfg, fps
-            try:
-                prof = self.pipe.start(cfg)
-                break
-            except RuntimeError:
-                if fps == 5:
-                    raise
-        self.align = rs.align(rs.stream.color)
-        self.depth_scale = prof.get_device().first_depth_sensor().get_depth_scale()
-        i = prof.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
-        self.K = np.array([[i.fx, 0, i.ppx], [0, i.fy, i.ppy], [0, 0, 1.0]])
-        self.dist = np.array(i.coeffs, dtype=np.float64)
-
-    def _grab_direct(self, warmup=10):
-        for _ in range(warmup):
-            frames = self.align.process(self.pipe.wait_for_frames())
-        color = np.asanyarray(frames.get_color_frame().get_data())
-        depth = np.asanyarray(frames.get_depth_frame().get_data()).astype(np.float32) * self.depth_scale
-        return color, depth
-
-    def start_recording(self, path, fps=None):
-        fps = fps or self.fps
-        import threading as _th
-        self._lock, self._latest, self._seq, self._stop = _th.Lock(), None, 0, False
-        self._writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (COLOR_W, COLOR_H))
-        if not self._writer.isOpened():
-            path = path.rsplit('.', 1)[0] + '.avi'
-            self._writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*'MJPG'), fps, (COLOR_W, COLOR_H))
-        self.video_path = path
-        self._thread = _th.Thread(target=self._rec_loop, daemon=True)
-        self._thread.start()
-
-    def _restart(self, hard=False):
-        """Restart the stream; with hard=True also reset the device (equivalent to a replug)."""
-        import time as _t
-        try:
-            self.pipe.stop()
-        except Exception:
-            pass
-        if hard:
-            try:
-                rs.context().query_devices()[0].hardware_reset()
-                _t.sleep(6)
-            except Exception:
-                pass
-        self.pipe = rs.pipeline()
-        for _ in range(5):
-            try:
-                prof = self.pipe.start(self.cfg)
-                self.depth_scale = prof.get_device().first_depth_sensor().get_depth_scale()
-                return True
-            except Exception:
-                _t.sleep(1.5)
-        return False
-
-    def _rec_loop(self):
-        import time as _t
-        fails = restarts = 0
-        while not self._stop:
-            try:
-                frames = self.align.process(self.pipe.wait_for_frames(3000))
-                fails = restarts = 0
-            except RuntimeError:
-                fails += 1
-                if fails >= 2:                                    # ~6 s without a frame: the stream is stalled
-                    print(f'[camera] stream stalled, restarting (hard reset: {restarts >= 1})', flush=True)
-                    self._restart(hard=restarts >= 1)
-                    restarts, fails = restarts + 1, 0
-                continue
-            color = np.asanyarray(frames.get_color_frame().get_data()).copy()
-            depth = np.asanyarray(frames.get_depth_frame().get_data()).astype(np.float32) * self.depth_scale
-            with self._lock:
-                self._latest, self._seq = (color, depth), self._seq + 1
-            self._writer.write(color)
-
-    def grab(self, warmup=10):
-        if getattr(self, '_thread', None) is None:
-            return self._grab_direct(warmup)
-        import time as _t
-        target = self._seq + warmup
-        deadline = _t.time() + 30.0
-        while self._seq < target:
-            if _t.time() > deadline:
-                raise RuntimeError('camera stalled: no frames for 30 s')
-            _t.sleep(0.02)
-        with self._lock:
-            return self._latest
-
-    def stop_recording(self):
-        if getattr(self, '_thread', None) is not None:
-            self._stop = True
-            self._thread.join(timeout=5)
-            self._writer.release()
-            self._thread = None
-
-    def close(self):
-        self.stop_recording()
-        self.pipe.stop()
-
-
-def detect_tag(color, K, dist):
-    """Return (T_cam_tag 4x4, corners 4x2) for TAG_ID, or None."""
-    det = cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(TAG_DICT))
-    corners, ids, _ = det.detectMarkers(cv2.cvtColor(color, cv2.COLOR_BGR2GRAY))
-    if ids is None or TAG_ID not in ids.ravel():
-        return None
-    c = corners[list(ids.ravel()).index(TAG_ID)].reshape(4, 2).astype(np.float64)
-    h = TAG_SIZE / 2
-    obj = np.array([[-h, h, 0], [h, h, 0], [h, -h, 0], [-h, -h, 0]], dtype=np.float64)
-    ok, rvec, tvec = cv2.solvePnP(obj, c, K, dist, flags=cv2.SOLVEPNP_IPPE_SQUARE)
-    if not ok:
-        return None
-    T = np.eye(4)
-    T[:3, :3] = cv2.Rodrigues(rvec)[0]
-    T[:3, 3] = tvec.ravel()
-    return T, c
-
-
 import threading
 import time
+import types
 
-from kortex_api.autogen.messages import Base_pb2
+import numpy as np
+import rclpy
+from rclpy.executors import SingleThreadedExecutor
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from scipy.spatial.transform import Rotation as R
+from sensor_msgs.msg import CameraInfo, Image
 
-# x, y, z limits (m) for any commanded tool position
-from cfg import CFG as _CFG
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ros2_iface'))
+from robot_ros import Robot, COLOR, DEPTH, INFO   # noqa: E402
+
+from cfg import CFG as _CFG   # noqa: E402
+
+GRIP_CLOSED = 0.81           # finger joint (rad) of a fully closed, empty gripper, measured in the air (0 = open)
+SPEED = float(_CFG.get('motion', {}).get('speed_factor', 1.0))
 _S = _CFG['safety']
 SAFETY_ON = bool(_S.get('enabled', True))
+_NODE_IDS = itertools.count()
 
 
 def joint_cap(deg):
-    """Per-move joint-step cap."""
+    """Per-move joint-step cap; unlimited when software safety is off."""
     return deg if SAFETY_ON else 360.0
 
 
 BOUNDS = {'x': tuple(_S['bounds']['x']), 'y': tuple(_S['bounds']['y']), 'z': (_S['z_min_near_zone'], _S['bounds']['z_max'])}
-
-
-ZONE_AXIS_XY, ZONE_RADIUS = tuple(_S['zone']['axis_xy']), _S['zone']['radius']      # arm's base protection zone (cylinder)
+ZONE_AXIS_XY, ZONE_RADIUS = tuple(_S['zone']['axis_xy']), _S['zone']['radius']
 ZONE_MARGIN = _S['zone']['margin']
 Z_MIN_NEAR, Z_MIN_FAR = _S['z_min_near_zone'], _S['z_min_far_from_zone']
 
@@ -200,38 +48,15 @@ def in_safe_bounds(x, y, z):
 
 def check_bounds(x, y, z):
     if not in_safe_bounds(x, y, z):
-        raise ValueError(f'tool position ({x:.3f}, {y:.3f}, {z:.3f}) outside safe bounds '
-                         f'{BOUNDS}, z >= {Z_MIN_FAR} only when >= {ZONE_RADIUS + ZONE_MARGIN:.2f} m from the zone axis')
+        raise ValueError(f'tool position ({x:.3f}, {y:.3f}, {z:.3f}) outside safe bounds {BOUNDS}')
 
 
-def move_to(base, x, y, z, theta_x, theta_y, theta_z, speed=0.03, rot_speed=10.0, timeout=90):
-    """Blocking Cartesian move of the tool to a pose."""
-    check_bounds(x, y, z)
-    base.SetServoingMode(Base_pb2.ServoingModeInformation(servoing_mode=Base_pb2.SINGLE_LEVEL_SERVOING))
-    done, result = threading.Event(), {}
-
-    def cb(n):
-        if n.action_event in (Base_pb2.ACTION_END, Base_pb2.ACTION_ABORT):
-            result['event'] = n.action_event
-            result['abort'] = n.abort_details
-            done.set()
-    handle = base.OnNotificationActionTopic(cb, Base_pb2.NotificationOptions())
-    a = Base_pb2.Action()
-    a.name = 'move_to'
-    c = a.reach_pose.target_pose
-    c.x, c.y, c.z, c.theta_x, c.theta_y, c.theta_z = x, y, z, theta_x, theta_y, theta_z
-    a.reach_pose.constraint.speed.translation = speed
-    a.reach_pose.constraint.speed.orientation = rot_speed
-    try:
-        base.ExecuteAction(a)
-        if not done.wait(timeout):
-            base.Stop()
-            raise TimeoutError('move timed out; arm stopped')
-    finally:
-        base.Unsubscribe(handle)
-    if result['event'] != Base_pb2.ACTION_END:
-        raise RuntimeError(f'move aborted, details={result["abort"]}')
-    return True
+def pose_to_matrix(p):
+    """Tool pose (x, y, z m; theta x, y, z deg, extrinsic x-y-z) -> 4x4 base<-tool."""
+    T = np.eye(4)
+    T[:3, :3] = R.from_euler('xyz', [p.theta_x, p.theta_y, p.theta_z], degrees=True).as_matrix()
+    T[:3, 3] = [p.x, p.y, p.z]
+    return T
 
 
 def _wrap180(d):
@@ -241,19 +66,179 @@ def _wrap180(d):
 def joint_margin_deg(q_deg):
     """Smallest distance (deg) of any joint from its limit."""
     lim = np.array(_CFG['robot']['joint_limits_deg'], dtype=float)
-    signed = (np.asarray(q_deg, dtype=float) + 180.0) % 360.0 - 180.0
-    return float(np.min(lim[:len(signed)] - np.abs(signed)))
+    return float(np.min(lim[:len(q_deg)] - np.abs(_wrap180(np.asarray(q_deg, dtype=float)))))
+
+
+# ---- stand-ins for the few message fields the pipeline fills ----
+class _Val:
+    def __init__(self, v=0.0):
+        self.value = v
+
+
+class _List(list):
+    def add(self):
+        v = _Val()
+        self.append(v)
+        return v
+
+
+class _Guess:
+    def __init__(self):
+        self.joint_angles = _List()
+
+    def Clear(self):
+        self.joint_angles = _List()
+
+
+class IKData:
+    def __init__(self):
+        self.cartesian_pose = types.SimpleNamespace(x=0, y=0, z=0, theta_x=0, theta_y=0, theta_z=0)
+        self.guess = _Guess()
+
+
+Base_pb2 = types.SimpleNamespace(IKData=IKData)
+
+
+def _deg360(q):
+    return np.mod(np.asarray(q, dtype=float), 360.0)
+
+
+class RosBase:
+    """Arm state and IK for the pipeline, answered through ROS 2 (joint states, TF, MoveIt /compute_ik)."""
+
+    def __init__(self, robot):
+        self.r = robot
+
+    def GetMeasuredCartesianPose(self):
+        T = self.r.tool_matrix()
+        e = R.from_matrix(T[:3, :3]).as_euler('xyz', degrees=True)
+        return types.SimpleNamespace(x=T[0, 3], y=T[1, 3], z=T[2, 3], theta_x=e[0], theta_y=e[1], theta_z=e[2])
+
+    def GetMeasuredJointAngles(self):
+        return types.SimpleNamespace(joint_angles=[_Val(float(v)) for v in _deg360(self.r.joints_deg())])
+
+    def ComputeInverseKinematics(self, d):
+        c = d.cartesian_pose
+        T = np.eye(4)
+        T[:3, :3] = R.from_euler('xyz', [c.theta_x, c.theta_y, c.theta_z], degrees=True).as_matrix()
+        T[:3, 3] = [c.x, c.y, c.z]
+        seed = [a.value for a in d.guess.joint_angles]
+        seed = None if len(seed) != 6 else _wrap180(np.array(seed))
+        q = self.r.ik(T, seed)
+        if q is None:
+            raise RuntimeError('IK: no solution')
+        return types.SimpleNamespace(joint_angles=[_Val(float(v)) for v in _deg360(q)])
+
+    def Stop(self):
+        self.r.stop()
+
+
+class _Conn:
+    def __enter__(self):
+        if not rclpy.ok():
+            rclpy.init()
+        self.robot = Robot(f'hw7_robot_{next(_NODE_IDS)}')
+        if not self.robot.wait_ready(15.0):
+            raise RuntimeError('ROS 2 stack not ready: start the kortex_bringup driver (joint_states, controllers) first')
+        return self.robot
+
+    def __exit__(self, *a):
+        self.robot.destroy_node()
+
+
+def connect():
+    return _Conn()
+
+
+def BaseClient(router):
+    return RosBase(router)
+
+
+class D405:
+    """Camera through the realsense2_camera topics; a background thread keeps frames arriving (and can record them)."""
+
+    def __init__(self):
+        if not rclpy.ok():
+            rclpy.init()
+        self.node = Node(f'hw7_camera_{next(_NODE_IDS)}')
+        self._ex = SingleThreadedExecutor()
+        self._ex.add_node(self.node)
+        self._lock, self._color, self._depth, self._seq, self._writer = threading.Lock(), None, None, 0, None
+        self.K, self.dist = None, np.zeros(5)
+        self.node.create_subscription(Image, COLOR, self._on_color, qos_profile_sensor_data)
+        self.node.create_subscription(Image, DEPTH, self._on_depth, qos_profile_sensor_data)
+        self.node.create_subscription(CameraInfo, INFO, self._on_info, qos_profile_sensor_data)
+        self._stop = False
+        self._th = threading.Thread(target=self._spin, daemon=True)
+        self._th.start()
+        t0 = time.time()
+        while (self.K is None or self._color is None or self._depth is None) and time.time() - t0 < 15:
+            time.sleep(0.05)
+        if self.K is None or self._color is None or self._depth is None:
+            raise RuntimeError('no camera frames: is realsense2_camera running with align_depth.enable:=true ?')
+
+    def _spin(self):
+        while not self._stop and rclpy.ok():
+            self._ex.spin_once(timeout_sec=0.05)
+
+    def _on_info(self, m):
+        self.K = np.array(m.k).reshape(3, 3)
+
+    def _on_color(self, m):
+        c = np.frombuffer(m.data, np.uint8).reshape(m.height, m.width, -1)
+        c = np.ascontiguousarray(c[:, :, ::-1] if m.encoding == 'rgb8' else c)
+        with self._lock:
+            self._color, self._seq = c, self._seq + 1
+        if self._writer is not None:
+            self._writer.write(c)
+
+    def _on_depth(self, m):
+        d = np.frombuffer(m.data, np.uint16).reshape(m.height, m.width).astype(np.float32) * 1e-3
+        with self._lock:
+            self._depth = d
+
+    def grab(self, warmup=10):
+        """(color BGR, depth metres) after `warmup` new frames."""
+        with self._lock:
+            target = self._seq + max(1, warmup)
+        t0 = time.time()
+        while time.time() - t0 < 30:
+            with self._lock:
+                if self._seq >= target:
+                    break
+            time.sleep(0.02)
+        else:
+            raise RuntimeError('camera stalled: no frames for 30 s')
+        time.sleep(0.05)
+        with self._lock:
+            return self._color.copy(), self._depth.copy()
+
+    def start_recording(self, path, fps=15):
+        import cv2
+        h, w = self._color.shape[:2]
+        self._writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+        if not self._writer.isOpened():
+            self._writer = cv2.VideoWriter(path.rsplit('.', 1)[0] + '.avi', cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h))
+
+    def stop_recording(self):
+        if self._writer is not None:
+            self._writer.release()
+            self._writer = None
+
+    def close(self):
+        self.stop_recording()
+        self._stop = True
+        self._th.join(timeout=2)
+        self.node.destroy_node()
 
 
 def _ik_seeds(cur_deg):
-    """IK seeds in order: the current joints, then the saved parking (scan) joints if they exist."""
+    """IK seeds in order: the current joints, then the saved home (scan) joints."""
     seeds = [cur_deg]
     try:
-        from cfg import ROOT
-        import json as _json
+        from cfg import ROOT, load_json
         p = os.path.join(ROOT, 'calibration', 'scan_joints.json')
         if os.path.exists(p):
-            from cfg import load_json
             seeds.append(np.array(load_json(p), dtype=float))
     except Exception:
         pass
@@ -261,15 +246,13 @@ def _ik_seeds(cur_deg):
 
 
 def move_joint(base, x, y, z, theta_x, theta_y, theta_z, duration=None, max_joint_deg=40.0, timeout=90):
-    """Smooth move: IK for the target tool pose, then a joint-space move with a fixed duration."""
+    """IK for the target tool pose, then a joint-space move of fixed duration; refuses joint steps above max_joint_deg."""
     check_bounds(x, y, z)
     max_joint_deg = joint_cap(max_joint_deg)
     cur = base.GetMeasuredJointAngles()
     ik = Base_pb2.IKData()
     t = ik.cartesian_pose
     t.x, t.y, t.z, t.theta_x, t.theta_y, t.theta_z = x, y, z, theta_x, theta_y, theta_z
-    for a in cur.joint_angles:
-        ik.guess.joint_angles.add().value = a.value
     cur_deg = np.array([a.value for a in cur.joint_angles])
     sol, last_exc = None, None
     for guess in _ik_seeds(cur_deg):
@@ -289,45 +272,15 @@ def move_joint(base, x, y, z, theta_x, theta_y, theta_z, duration=None, max_join
         raise RuntimeError(f'IK wants a {np.abs(delta).max():.0f} deg joint move (> {max_joint_deg}); refusing')
     if np.abs(delta).max() < 0.3:
         return True
-    target = cur_deg + delta
     if duration is None:
-        duration = max(2.0, float(np.abs(delta).max()) / 8.0)       # <= 8 deg/s on the fastest joint
-    if _SMOOTH:
-        return smooth_joint_trajectory(base, target, duration)
-
-    return _joint_action(base, target, duration, timeout)
-
-
-SPEED = float(_CFG.get('motion', {}).get('speed_factor', 1.0))
+        duration = max(2.0, float(np.abs(delta).max()) / 8.0)
+    return _joint_action(base, cur_deg + delta, duration, timeout)
 
 
 def _joint_action(base, target, duration, timeout=90):
-    """Run a joint-space move to `target` (deg) lasting `duration` s."""
-    duration = duration / SPEED
-    base.SetServoingMode(Base_pb2.ServoingModeInformation(servoing_mode=Base_pb2.SINGLE_LEVEL_SERVOING))
-    done, result = threading.Event(), {}
-
-    def cb(n):
-        if n.action_event in (Base_pb2.ACTION_END, Base_pb2.ACTION_ABORT):
-            result['event'], result['abort'] = n.action_event, n.abort_details
-            done.set()
-    handle = base.OnNotificationActionTopic(cb, Base_pb2.NotificationOptions())
-    a = Base_pb2.Action()
-    a.name = 'move_joint'
-    for i, v in enumerate(target):
-        j = a.reach_joint_angles.joint_angles.joint_angles.add()
-        j.joint_identifier, j.value = i, float(v % 360.0)
-    a.reach_joint_angles.constraint.type = Base_pb2.JOINT_CONSTRAINT_DURATION
-    a.reach_joint_angles.constraint.value = float(duration)
-    try:
-        base.ExecuteAction(a)
-        if not done.wait(timeout):
-            base.Stop()
-            raise TimeoutError('move timed out; arm stopped')
-    finally:
-        base.Unsubscribe(handle)
-    if result['event'] != Base_pb2.ACTION_END:
-        raise RuntimeError(f'move aborted, details={result["abort"]}')
+    """Joint-space move to `target` (deg) lasting `duration` s (shortened by motion.speed_factor)."""
+    q = _wrap180(np.asarray(target, dtype=float))
+    base.r.move_joints(q, max(0.5, duration / SPEED))
     return True
 
 
@@ -340,33 +293,47 @@ def move_to_joints(base, q_deg, duration=None, max_joint_deg=90.0, timeout=90):
         raise RuntimeError(f'joint move of {np.abs(delta).max():.0f} deg (> {max_joint_deg}); refusing')
     if np.abs(delta).max() < 0.3:
         return True
-    for tau in np.linspace(0.25, 1.0, 4):
-        if not _fk_ok(base, cur + delta * tau):
-            raise RuntimeError(f'joint move refused: path point at {tau:.2f} leaves the safe bounds')
     if duration is None:
         duration = max(2.0, float(np.abs(delta).max()) / 10.0)
-    if _SMOOTH:
-        return smooth_joint_trajectory(base, cur + delta, duration)
     return _joint_action(base, cur + delta, duration, timeout)
 
 
+def lift_up(base, dz=0.12, speed=0.04, timeout=15.0):
+    """Straight up by dz metres (MoveIt Cartesian path)."""
+    T = base.r.tool_matrix()
+    z0 = T[2, 3]
+    T[2, 3] += dz
+    base.r.move_line(T, max(1.0, dz / 0.05 / SPEED))
+    return base.r.tool_matrix()[2, 3] - z0
+
+
+def go_home(base, name='Home', timeout=90):
+    """Move to the saved home (scan) joints."""
+    from cfg import ROOT, load_json
+    _joint_action(base, load_json(os.path.join(ROOT, 'calibration', 'scan_joints.json')), 10.0)
+
+
+# ---- gripper: 0 = open, 1 = closed (scaled from the finger joint) ----
 def grip_pos(base):
-    req = Base_pb2.GripperRequest(); req.mode = Base_pb2.GRIPPER_POSITION
-    return base.GetMeasuredGripperMovement(req).finger[0].value
+    base.r.spin_until(lambda: False, 0.05)
+    return float(np.clip((getattr(base.r, 'grip_pos_msr', 0.0) or 0.0) / GRIP_CLOSED, 0.0, 1.0))
 
 
 def grip_cmd(base, v):
-    cmd = Base_pb2.GripperCommand(); cmd.mode = Base_pb2.GRIPPER_POSITION
-    f = cmd.gripper.finger.add(); f.finger_identifier = 1; f.value = float(np.clip(v, 0.0, 1.0))
-    base.SendGripperCommand(cmd)
+    from control_msgs.action import GripperCommand
+    goal = GripperCommand.Goal()
+    goal.command.position = float(np.clip(v, 0.0, 1.0)) * GRIP_CLOSED
+    goal.command.max_effort = 30.0
+    base.r.grip.send_goal_async(goal)
+    base.r.spin_until(lambda: False, 0.01)
 
 
 def _smoothstep(x):
-    return x * x * x * (10 - 15 * x + 6 * x * x)          # minimum-jerk blend 0 -> 1
+    return x * x * x * (10 - 15 * x + 6 * x * x)
 
 
 def grip_ramp(base, target, rate=0.25, dt=0.04, stall_gap=0.05, stall_steps=3):
-    """Move the gripper to `target` along a minimum-jerk ramp at about `rate`."""
+    """Move the gripper to `target` along a minimum-jerk ramp; while closing, stop and hold if the fingers lag the command (contact). Returns (position, contact)."""
     start = grip_pos(base)
     n = max(2, int(abs(target - start) / (rate * dt)))
     lag = 0
@@ -383,146 +350,3 @@ def grip_ramp(base, target, rate=0.25, dt=0.04, stall_gap=0.05, stall_steps=3):
                 return grip_pos(base), True
     time.sleep(0.6)
     return grip_pos(base), False
-
-
-import signal
-
-from kortex_api.autogen.client_stubs.BaseCyclicClientRpc import BaseCyclicClient
-
-_M = _CFG.get('motion', {})
-_SMOOTH = bool(_M.get('smooth', False))
-_KP, _VMAX, _TOL = float(_M.get('kp', 2.5)), float(_M.get('vmax_deg_s', 30.0)), float(_M.get('tol_deg', 0.2))
-_CYC = {}
-
-
-def _cyclic():
-    """One cached UDP cyclic client (fast joint feedback), closed at interpreter exit."""
-    if 'c' not in _CYC:
-        import atexit
-        conn = DeviceConnection(ARM_IP, port=DeviceConnection.UDP_PORT, credentials=CREDENTIALS)
-        router = conn.__enter__()
-        _CYC['conn'], _CYC['c'] = conn, BaseCyclicClient(router)
-        atexit.register(lambda: conn.__exit__(None, None, None))
-    return _CYC['c']
-
-
-def _speeds(v):
-    js = Base_pb2.JointSpeeds()
-    for i, x in enumerate(v):
-        s = js.joint_speeds.add()
-        s.joint_identifier, s.value, s.duration = i, float(x), 1       # 1 = shortest expiry the arm accepts
-    return js
-
-
-def _fk_ok(base, q_deg):
-    """Tool-origin bounds check of a joint configuration via forward kinematics."""
-    if not SAFETY_ON:
-        return True
-    try:
-        ja = Base_pb2.JointAngles()
-        for v in q_deg:
-            ja.joint_angles.add().value = float(v % 360.0)
-        p = base.ComputeForwardKinematics(ja)
-        return in_safe_bounds(p.x, p.y, p.z)
-    except Exception:
-        return True                                                        # FK unavailable: endpoint checks still apply
-
-
-def smooth_joint_trajectory(base, q_target_deg, T, dt=0.02):
-    """Move all joints from the measured configuration to q_target along a minimum-jerk profile."""
-    cyc = _cyclic()
-    q_now = lambda: np.array([a.position for a in cyc.RefreshFeedback().actuators])
-    q0 = q_now()
-    delta = _wrap180(np.asarray(q_target_deg) - q0)
-    for tau in np.linspace(0.1, 1.0, 10):                                  # path check before moving
-        s = 10 * tau ** 3 - 15 * tau ** 4 + 6 * tau ** 5
-        if not _fk_ok(base, q0 + delta * s):
-            raise RuntimeError(f'smooth move refused: path point at {tau:.1f} leaves the safe bounds')
-    base.SetServoingMode(Base_pb2.ServoingModeInformation(servoing_mode=Base_pb2.SINGLE_LEVEL_SERVOING))
-
-    def _term(signum, frame):
-        raise SystemExit('SIGTERM during a move')
-    old = signal.signal(signal.SIGTERM, _term)
-    trace = []
-    t0 = time.perf_counter()
-    try:
-        while True:
-            t = time.perf_counter() - t0
-            tau = min(t / T, 1.0)
-            s = 10 * tau ** 3 - 15 * tau ** 4 + 6 * tau ** 5
-            ds = (30 * tau ** 2 - 60 * tau ** 3 + 30 * tau ** 4) / T
-            q = q_now()
-            err = _wrap180(q0 + delta * s - q)
-            v = np.clip(delta * ds + _KP * err, -_VMAX, _VMAX)
-            base.SendJointSpeedsCommand(_speeds(v))
-            trace.append((t, q.copy(), v.copy()))
-            if tau >= 1.0 and np.abs(_wrap180(np.asarray(q_target_deg) - q)).max() < _TOL:
-                break
-            if t > T + 3.0:
-                raise TimeoutError(f'smooth move did not converge (residual {np.abs(_wrap180(np.asarray(q_target_deg) - q)).max():.2f} deg)')
-            time.sleep(max(0.0, dt - (time.perf_counter() - t0 - t)))
-    except BaseException:
-        base.Stop()
-        raise
-    finally:
-        try:
-            base.SendJointSpeedsCommand(_speeds(np.zeros(len(q0))))
-        finally:
-            signal.signal(signal.SIGTERM, old)
-    smooth_joint_trajectory.last_trace = trace
-    return True
-
-
-def lift_up(base, dz=0.12, speed=0.04 * SPEED, timeout=15.0):
-    """Straight up in the base frame by dz metres using a Cartesian twist."""
-    base.SetServoingMode(Base_pb2.ServoingModeInformation(servoing_mode=Base_pb2.SINGLE_LEVEL_SERVOING))
-    z0 = base.GetMeasuredCartesianPose().z
-    t = Base_pb2.TwistCommand()
-    t.reference_frame = Base_pb2.CARTESIAN_REFERENCE_FRAME_BASE
-    t.twist.linear_z = speed
-    t.duration = 0
-    t0 = time.time()
-    try:
-        base.SendTwistCommand(t)
-        while time.time() - t0 < timeout:
-            z = base.GetMeasuredCartesianPose().z
-            if z - z0 >= dz:
-                break
-            if time.time() - t0 > 3.0 and z - z0 < 0.005:
-                raise RuntimeError('lift_up: the arm is not moving')
-            time.sleep(0.05)
-    finally:
-        base.Stop()
-        time.sleep(0.5)
-    return base.GetMeasuredCartesianPose().z - z0
-
-
-def go_home(base, name='Home', timeout=90):
-    """Run one of the arm's own built-in joint-angle actions (Home, Retract, Packaging, Zero)."""
-    t = Base_pb2.RequestedActionType()
-    t.action_type = Base_pb2.REACH_JOINT_ANGLES
-    handle = next(a.handle for a in base.ReadAllActions(t).action_list if a.name == name)
-    base.SetServoingMode(Base_pb2.ServoingModeInformation(servoing_mode=Base_pb2.SINGLE_LEVEL_SERVOING))
-    done, result = threading.Event(), {}
-
-    def cb(n):
-        if n.action_event in (Base_pb2.ACTION_END, Base_pb2.ACTION_ABORT):
-            result['event'], result['abort'] = n.action_event, n.abort_details
-            done.set()
-    sub = base.OnNotificationActionTopic(cb, Base_pb2.NotificationOptions())
-    try:
-        base.ExecuteActionFromReference(handle)
-        if not done.wait(timeout):
-            base.Stop()
-            raise TimeoutError(f'{name} timed out; arm stopped')
-    finally:
-        base.Unsubscribe(sub)
-    if result['event'] != Base_pb2.ACTION_END:
-        raise RuntimeError(f'{name} aborted, details={result["abort"]}')
-    return True
-
-
-if os.environ.get('HW6_BACKEND', _CFG.get('backend', 'kortex')) == 'ros2':
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ros2_iface'))
-    import backend as _ros_backend
-    _ros_backend.install(globals())

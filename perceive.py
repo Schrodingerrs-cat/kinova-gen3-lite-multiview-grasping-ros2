@@ -265,7 +265,7 @@ def synthesize_grasp(obj, plane, figs=False):
                 obj_height=obj_height, major=major, eigenvalues=ev)
 
 
-def main():
+def main(target=None):
     import glob
     o3d.utility.random.seed(0); np.random.seed(0)
     files = sorted(glob.glob('scans/scan_*.npz')) + sorted(glob.glob('scans/obl_*.npz'))
@@ -416,7 +416,7 @@ def main():
     clusters, heights = [clusters[i] for i in order], [heights[i] for i in order]
     centroids = np.array([cl.mean(0) for cl in clusters])
     print('[2.1] centroids of all objects: ' + '; '.join(f'object {i}: ({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f})' for i, c in enumerate(centroids)), flush=True)
-    t = int(sys.argv[sys.argv.index('--target') + 1]) if '--target' in sys.argv else 0
+    t = target if target is not None else (int(sys.argv[sys.argv.index('--target') + 1]) if '--target' in sys.argv else 0)
     if t >= len(clusters):
         raise SystemExit('no pickable object (all objects done)')
     print(f'      target = object {t} of {len(clusters)} on the table (nearest-first order)', flush=True)

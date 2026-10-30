@@ -11,7 +11,7 @@ from sensor_msgs.msg import CameraInfo, Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_ros import COLOR, DEPTH   # noqa: E402
 
-FLAG = '/tmp/hw6_camera_ready'
+FLAG = '/tmp/hw7_camera_ready'
 if os.path.exists(FLAG):
     os.remove(FLAG)
 rclpy.init()
