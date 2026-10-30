@@ -8,15 +8,18 @@ RBE 595 HW6/HW7: grasping with multi-view eye-in-hand point clouds on a real Kin
 
 There is no build, lint or test suite. Everything is scripts run against the real arm (venv: `source .venv/bin/activate`; arm at 192.168.1.10, admin/admin).
 
-## Commands
+## Commands (ROS 2 is the main path; the Kortex-API tools are in archive/)
+
+Run on ROS 2 with `./run_ros.sh` (driver, MoveIt and camera must be up in other terminals, all with `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`). `HW6_BACKEND=ros2` makes `common.py` use `ros2_iface/backend.py` instead of the Kortex API. Read-only check: `python3 ros2_iface/smoke_test.py`.
+
+## Commands (Kortex API, older)
 
 ```bash
 python run_pick.py --no-delay      # full session: scan ONCE, then pick each object and put it back (runs/<timestamp>/)
 python run_pick.py --exec-only     # re-run only grasp stage from last grasp.json/plan.json
 python run_pick.py --single        # one object only
 python scan.py --plan              # read-only: list fixed sweep views (no motion)
-python tools/make_views.py         # rebuild calibration/table_views.json (needs arm connection for IK, does not move)
-python tools/check_link.py         # read-only arm link + camera check
+python archive/kortex_api_tools/make_views.py   # (archived) rebuild calibration/table_views.json via Kortex IK; copy next to common.py first
 python perceive.py --target 0      # perception only on scans/scan_*.npz (no robot); target = k-th cluster, nearest-to-base first
 ```
 

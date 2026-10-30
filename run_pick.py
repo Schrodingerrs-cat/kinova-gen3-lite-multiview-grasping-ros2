@@ -13,7 +13,6 @@ import numpy as np
 from cfg import CFG, HAND_EYE, TIP_OFFSET_RECORD, load_json
 from common import connect, BaseClient, D405, move_joint, move_to_joints, lift_up, go_home
 import grasp_exec
-import place
 import scan
 
 SCAN_POSE = tuple(scan.SCAN_POSE)     # observation pose above the workspace (config.yaml)
