@@ -1,0 +1,32 @@
+{
+ "run": "20261029_211609",
+ "status": "2 object(s) picked and put back from one observation",
+ "picked": 2,
+ "cycles": [
+  {
+   "object": 0,
+   "n_objects": 2,
+   "target": [
+    0.36550831053265925,
+    -0.11978494048709959,
+    0.010650781021709977
+   ],
+   "status": "PICK + LIFT + RELEASE COMPLETE (place_back)"
+  },
+  {
+   "object": 1,
+   "n_objects": 2,
+   "target": [
+    0.3685968641771982,
+    0.17842926199364154,
+    0.051429365153617214
+   ],
+   "status": "PICK + LIFT + RELEASE COMPLETE (place_back)"
+  },
+  {
+   "object": 2,
+   "n_objects": null,
+   "status": "NO_MORE_OBJECTS"
+  }
+ ]
+}

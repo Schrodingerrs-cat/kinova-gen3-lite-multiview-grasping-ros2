@@ -9,11 +9,11 @@ git clone https://github.com/Schrodingerrs-cat/kinova-gen3-lite-multiview-graspi
 cd kinova-gen3-lite-multiview-grasping-ros2
 ```
 
-Known limitations: the views still disagree on the table height by up to about 30 mm (hand-eye calibration error), so close-range refinement does most of the work for the final grasp; very thin or dark objects can be missed or fail the gripper-contact check.
+Known limitations (the run above succeeded on both objects; an earlier attempt on a thin curved object did not): the views still disagree on the table height by up to about 30 mm (hand-eye calibration error), so close-range refinement does most of the work for the final grasp; very thin or dark objects can be missed or fail the gripper-contact check.
 
 ## Demo
 
-Wrist-camera view of a full run (20x speed): the scan, then picking an object and putting it back. Full video: [`wrist_camera.mp4`](runs/old%20runs/20261029_210833/video/wrist_camera.mp4).
+A full run on the real arm: the scan, then both objects on the table (a soup can and a gray block) are picked, lifted, put back and released, from one scan (wrist-camera view at 20x speed). Full video: [`wrist_camera.mp4`](runs/20261029_211609/video/wrist_camera.mp4).
 
 ![demo run, wrist camera at 20x](media/demo.gif)
 
@@ -27,11 +27,11 @@ Wrist-camera view of a full run (20x speed): the scan, then picking an object an
 <img src="media/view_poses_and_clouds.png" width="32%"> <img src="media/object_clusters.png" width="32%"> <img src="media/grasp_points.png" width="32%">
 </p>
 
-**Pick and put back:** pre-grasp, at the grasp pose, after the lift, placed back on the table.
+**Pick and put back:** pre-grasp, at the grasp pose, after the lift, placed back on the table (top row: soup can, bottom row: gray block).
 
 ![pick sequence](media/pick_sequence.jpg)
 
-All figures and per-step images of that run are in `runs/old runs/20261029_210833/`. The same clouds can be viewed live in RViz (see below).
+All figures, point clouds and per-step images of the run are in [`runs/20261029_211609/`](runs/20261029_211609/) (`log.txt`, `summary.md`, `results.json`, `scan/`, `object_k/`). An earlier run, with a banana that the gripper missed, is in `runs/old runs/20261029_210833/`. The same clouds can be viewed live in RViz (see below).
 
 ## Pipeline (ROS 2 nodes)
 
