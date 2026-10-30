@@ -31,8 +31,8 @@ def matrix(p, q):
 
 
 class Robot(Node):
-    def __init__(self):
-        super().__init__('hw6_robot')
+    def __init__(self, name='hw6_robot'):
+        super().__init__(name)
         self._ex = SingleThreadedExecutor()
         self._ex.add_node(self)
         self.q = None

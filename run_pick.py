@@ -75,13 +75,13 @@ SCAN_JOINTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cal
 def to_scan_pose(b):
     """Get to the observation pose from wherever the arm was left."""
     p = b.GetMeasuredCartesianPose()
-    print(f'start tool xyz ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})', flush=True)
+    print(f'  arm at ({p.x:.3f}, {p.y:.3f}, {p.z:.3f}) m', flush=True)
     if p.z < 0.15:
-        print(f'  lifting straight up from z={p.z:.3f} ...', flush=True)
+        print('  lifting straight up first', flush=True)
         try:
             lift_up(b, dz=0.17 - p.z)
         except Exception as exc:
-            print(f'  vertical lift failed ({exc!r})', flush=True)
+            print(f'  straight lift failed ({type(exc).__name__}), trying other routes', flush=True)
     steps = []
     if os.path.exists(SCAN_JOINTS_FILE):
         sj = load_json(SCAN_JOINTS_FILE)
@@ -96,17 +96,17 @@ def to_scan_pose(b):
                     move_joint(b, p2.x, p2.y, zt, p2.theta_x, p2.theta_y, p2.theta_z, duration=5.0, max_joint_deg=60)
                     break
                 except Exception as exc:
-                    print(f'  cannot rise to z={zt}: {type(exc).__name__}; trying lower', flush=True)
+                    print(f'  cannot rise to z={zt} ({type(exc).__name__}), trying lower', flush=True)
         move_joint(b, *SCAN_POSE, duration=8.0, max_joint_deg=200)
     steps.append(('rise, then IK move to the scan pose', rise_then_ik))
     steps.append(('arm Home action, then IK move to the scan pose', lambda: (go_home(b), move_joint(b, *SCAN_POSE, duration=8.0, max_joint_deg=200))))
     for name, fn in steps:
         try:
             fn()
-            print(f'  reached the scan pose via: {name}', flush=True)
+            print(f'  scan pose reached ({name})', flush=True)
             break
         except Exception as exc:
-            print(f'  {name} failed: {type(exc).__name__}: {str(exc)[:80]}', flush=True)
+            print(f'  {name}: failed ({type(exc).__name__})', flush=True)
     else:
         raise RuntimeError('could not reach the scan pose from the current arm pose')
     if not os.path.exists(SCAN_JOINTS_FILE):
@@ -120,11 +120,11 @@ def observe_once(cam, run):
     for s in ('01_observation', '02_pointclouds/raw_views_npz'):
         os.makedirs(f'{sd}/{s}', exist_ok=True)
     clear_scratch(scans=True)
-    print('\n[A] moving above the workspace (scan pose)', flush=True)
+    print('\n== Scan: moving to the scan pose ==', flush=True)
     with connect() as router:
         to_scan_pose(BaseClient(router))
     cv2.imwrite(f'{sd}/01_observation/overview_scan_pose.png', cam.grab(warmup=8)[0])
-    print('\n[B] observation: predetermined viewpoints covering the table, one point cloud each (done once)', flush=True)
+    print('\n== Scan: fixed viewpoints, one point cloud each (done once) ==', flush=True)
     scan.main(cam=cam, media_dir=f'{sd}/01_observation')
     shutil.copytree('scans', f'{sd}/02_pointclouds/raw_views_npz', dirs_exist_ok=True)
 
@@ -135,8 +135,7 @@ def pick_object(k, cam, run):
     for s in ('03_perception_figures', '02_pointclouds', '04_execution'):
         os.makedirs(f'{od}/{s}', exist_ok=True)
     clear_scratch()
-    print(f'\n################ object {k} ################', flush=True)
-    print('\n[C] perception (HW 6 Steps 1.1-3)', flush=True)
+    print(f'\n== Object {k + 1}: perception ==', flush=True)
     rc, out = sub(['perceive.py', '--target', str(k)])
     objs = json.load(open('objects.json')) if os.path.exists('objects.json') else None
     info = dict(object=k, n_objects=None if objs is None else len(objs['objects']))
@@ -151,13 +150,13 @@ def pick_object(k, cam, run):
         raise RuntimeError('perception failed unexpectedly')
     info['target'] = objs['objects'][k]['centroid']
 
-    print('\n[D] grasp plan check (no motion)', flush=True)
+    print(f'\n== Object {k + 1}: grasp plan check (no motion) ==', flush=True)
     rc, out = sub(['grasp_plan.py'])
     if 'PLAN OK' not in out:
         collect(od)
         return 'SKIPPED: plan check failed (grasp not reachable)', info
 
-    print('\n[E] executing: grasp, lift, put back, release', flush=True)
+    print(f'\n== Object {k + 1}: grasp, lift, put back ==', flush=True)
     try:
         status = grasp_exec.main(cam=cam, media_dir=f'{od}/04_execution')
     except grasp_exec.GraspAbort as exc:
@@ -174,12 +173,12 @@ def main():
         os.makedirs(f'{run}/{f}', exist_ok=True)
     logf = open(f'{run}/log.txt', 'w')
     sys.stdout = Tee(sys.__stdout__, logf)
-    print(f'=== run {ts} ===', flush=True)
+    print(f'Run {ts}  (saved to runs/{ts}/)', flush=True)
     delay = float(CFG.get('pipeline', {}).get('start_delay_s', 0))
     if delay > 0 and '--no-delay' not in sys.argv:
-        print(f'starting in {delay:.0f} s: put the objects where you want them and keep hands clear of the arm', flush=True)
+        print(f'Starting in {delay:.0f} s. Place the objects and keep clear of the arm.', flush=True)
         for left in range(int(delay), 0, -5):
-            print(f'  ... {left} s', flush=True)
+            print(f'  {left} s', flush=True)
             time.sleep(min(5, left))
     max_objects = 1 if '--single' in sys.argv else int(CFG.get('pick_all', {}).get('max_objects', 1))
     if os.path.exists(EXCL):
@@ -193,19 +192,19 @@ def main():
             st, info = pick_object(k, cam, run)
             info['status'] = st
             results.append(info)
-            print(f'\n--- object {k}: {st}', flush=True)
+            print(f'\n-> Object {k + 1}: {st}', flush=True)
             if st == 'NO_MORE_OBJECTS':
                 break
             if st.startswith('PICK'):
                 picked += 1
         with connect() as router:
             to_scan_pose(BaseClient(router))
-        status = f'{picked} object(s) picked and put back from one observation'
+        status = f'Done: {picked} object(s) picked and put back from one scan'
     except BaseException as exc:
-        status = f'ABORTED after {picked} object(s): {exc!r}'
+        status = f'Aborted after {picked} object(s): {exc!r}'
         raise
     finally:
-        print(f'\n=== {status} ===', flush=True)
+        print(f'\n== {status} ==', flush=True)
         cam.close()
         os.makedirs(f'{run}/config/code', exist_ok=True)
         for f in glob.glob('*.py'):
@@ -216,11 +215,11 @@ def main():
         logf.flush()
         json.dump(dict(run=ts, status=status, picked=picked, cycles=results), open(f'{run}/results.json', 'w'), indent=1,
                   default=lambda o: o.tolist() if hasattr(o, 'tolist') else str(o))
-        keys = ('###', '[B]', 'view ', '[1.', '[2.', '[3', 'cluster', 'target', 'PLAN', 'place slot', 'close-range', 'refined', 'gripper', 'reached', '->', 'COMPLETE', '---')
+        keys = ('== ', 'view ', '[1.', '[2.', '[3', 'cluster', 'target', 'PLAN', 'close-range', 'refined', 'gripper', 'reached', '->', 'COMPLETE')
         lines = [l for l in open(f'{run}/log.txt').read().splitlines() if any(k in l for k in keys)]
         with open(f'{run}/summary.md', 'w') as f:
             f.write(f'# Run {ts}\n\n**Result:** {status}\n\n```\n' + '\n'.join(lines) + '\n```\n')
-        print(f'saved everything to {run}/', flush=True)
+        print(f'Saved to {run}/', flush=True)
 
 
 if __name__ == '__main__':

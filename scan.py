@@ -41,7 +41,9 @@ def main(cam=None, media_dir=None, plan_only=False):
             views, q_park = fixed['views'], fixed['parking_joints']
             for i, v in enumerate(views):
                 v['dq'] = float(np.abs(_wrap180(np.array(v['joints']) - np.array(q_park))).max())
-                print(f'  view {i} {v["name"]}: tool xyz {v["tool_xyz"]}, {"swung %+.0f deg about the base" % v["tilt_deg"] if v.get("kind", "sweep") == "sweep" else "oblique, looking in from %.0f deg off vertical" % v["tilt_deg"]} | largest joint step {v["dq"]:.0f} deg', flush=True)
+                if plan_only:
+                    kind = 'sweep %+.0f deg' % v['tilt_deg'] if v.get('kind', 'sweep') == 'sweep' else 'oblique %.0f deg' % v['tilt_deg']
+                    print(f'  view {i + 1}/{len(views)} {v["name"]:15s} {kind:16s} tool xyz {np.round(v["tool_xyz"], 3)}  max joint step {v["dq"]:.0f} deg', flush=True)
             if plan_only:
                 return views
 
@@ -50,7 +52,7 @@ def main(cam=None, media_dir=None, plan_only=False):
                     T_bt = pose_to_matrix(base.GetMeasuredCartesianPose())
                     color, depth = cam.grab(warmup=6)
                 except RuntimeError as exc:                   # camera stalled and could not recover: skip this view
-                    print(f'view {k} ({v["name"]}): SKIPPED, camera error: {exc}', flush=True)
+                    print(f'  view {k + 1}/{len(views)} {v["name"]}: skipped, camera error: {exc}', flush=True)
                     return
                 if media_dir:
                     import cv2
@@ -66,7 +68,7 @@ def main(cam=None, media_dir=None, plan_only=False):
                     poses = json.load(open(pf)) if os.path.exists(pf) else []
                     poses.append(dict(index=len(names) - 1, name=v['name'], T_base_cam=T.tolist(), T_base_tool=T_bt.tolist(), tilt_deg=v['tilt_deg'], tilt_axis=v['tilt_axis']))
                     json.dump(poses, open(pf, 'w'), indent=1)
-                print(f'view {len(names) - 1} ({v["name"]}): {len(pts)} points, camera at {T[:3, 3].round(3)}', flush=True)
+                print(f'  view {len(names)}/{len(views)} {v["name"]}: {len(pts)} points', flush=True)
 
             try:
                 for k, v in enumerate(views):
@@ -74,7 +76,7 @@ def main(cam=None, media_dir=None, plan_only=False):
                     time.sleep(1.0)
                     capture(v, k)
             finally:
-                print('returning to the observation pose', flush=True)
+                print('  returning to the scan pose', flush=True)
                 move_to_joints(base, q_park, duration=MOVE_S + 3, max_joint_deg=360)
     finally:
         if own_cam:

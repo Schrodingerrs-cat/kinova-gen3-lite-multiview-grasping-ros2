@@ -1,4 +1,5 @@
 """ROS 2 backend for common.py."""
+import itertools
 import os
 import sys
 import threading
@@ -16,6 +17,7 @@ from sensor_msgs.msg import CameraInfo, Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_ros import Robot, COLOR, DEPTH, INFO   # noqa: E402
 
+_NODE_IDS = itertools.count()
 GRIP_CLOSED = 0.81
 
 
@@ -81,7 +83,7 @@ class RosBase:
 class _Conn:
     def __enter__(self):
         _init()
-        self.robot = Robot()
+        self.robot = Robot(f'hw6_robot_{next(_NODE_IDS)}')
         if not self.robot.wait_ready(15.0):
             raise RuntimeError('ROS 2 stack not ready: start the kortex_bringup driver (joint_states, controllers) first')
         return self.robot
