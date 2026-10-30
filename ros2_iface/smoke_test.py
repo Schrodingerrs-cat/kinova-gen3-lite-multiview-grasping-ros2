@@ -1,4 +1,4 @@
-"""Read-only check of the ROS 2 stack: joint states, TF base->tool, action servers, one camera frame. Never moves the arm."""
+"""Read-only check of the ROS 2 stack (joint states, TF, action servers, camera, IK); never moves the arm."""
 import os
 import sys
 

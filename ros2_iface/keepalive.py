@@ -1,5 +1,4 @@
-"""Keeps the realsense2_camera streams running: the node publishes the aligned depth only while somebody is subscribed, and it takes it a while to
-start after the first subscriber. This holds a subscription for the whole run and writes a flag file once colour + aligned depth are flowing."""
+"""Keeps the realsense2_camera streams running."""
 import os
 import sys
 import time
@@ -21,7 +20,7 @@ cnt = {'color': 0, 'depth': 0, 'raw': 0}
 RAW = '/camera/camera/depth/image_rect_raw'
 n.create_subscription(Image, COLOR, lambda m: cnt.__setitem__('color', cnt['color'] + 1), qos_profile_sensor_data)
 n.create_subscription(Image, DEPTH, lambda m: cnt.__setitem__('depth', cnt['depth'] + 1), qos_profile_sensor_data)
-n.create_subscription(Image, RAW, lambda m: cnt.__setitem__('raw', cnt['raw'] + 1), qos_profile_sensor_data)      # the aligned stream only starts reliably with the raw depth subscribed too
+n.create_subscription(Image, RAW, lambda m: cnt.__setitem__('raw', cnt['raw'] + 1), qos_profile_sensor_data)
 n.create_subscription(CameraInfo, '/camera/camera/aligned_depth_to_color/camera_info', lambda m: None, qos_profile_sensor_data)
 try:
     while rclpy.ok():

@@ -1,9 +1,4 @@
-"""Step 4: execute the grasp on the real arm. Pre-grasp -> close-range cube check -> descend -> close -> lift.
-
-Safety: slow joint-space moves, every pose bounds- and IK-checked first, the cube position is re-measured from
-the pre-grasp pose and the run aborts if it differs from the plan, the gripper closes in steps until the
-fingers stall, and the lift is skipped if the gripper closed on nothing. Ctrl-C / any error stops the arm.
-"""
+"""Step 4: execute the grasp on the real arm."""
 import json
 import sys
 import time
@@ -18,17 +13,17 @@ from scan import depth_to_points
 from cfg import section as _section, HAND_EYE
 
 _E = _section('execution')
-MAX_CORRECTION = _E['max_correction_m']      # m: abort if the close-range block centre differs from the plan by more than this
-GRIP_EMPTY = _E['grip_empty']                # settled gripper position above this = closed on nothing
-POS_TOL = _E['pos_tol_m']                    # m: abort if a move ends farther than this from its target
+MAX_CORRECTION = _E['max_correction_m']
+GRIP_EMPTY = _E['grip_empty']
+POS_TOL = _E['pos_tol_m']
 DUR = _E['durations_s']
-PLACE_EXTRA = float(_E.get('place_extra_height_m', 0.04))   # carry the object this much higher than the normal lift
-REFINE_MAX_JOINT_DEG = float(_E.get('refine_max_joint_deg', 70.0))   # the refined pre-grasp must be a small joint move from where the arm is
+PLACE_EXTRA = float(_E.get('place_extra_height_m', 0.04))
+REFINE_MAX_JOINT_DEG = float(_E.get('refine_max_joint_deg', 70.0))
 RELEASE = _E.get('release', 'none')           # place_back | drop | none
 
 
 class GraspAbort(RuntimeError):
-    """A check failed BEFORE the object was touched (not reachable, not where expected, missed grasp): skip this object, carry on."""
+    """A check failed BEFORE the object was touched."""
 
 
 def go(base, name, pos, eul, duration=None, soft=False):
@@ -38,7 +33,7 @@ def go(base, name, pos, eul, duration=None, soft=False):
     try:
         move_joint(base, *pos, *eul, duration=duration, max_joint_deg=70)
     except RuntimeError as exc:
-        if soft and 'details=55' not in str(exc):          # the arm could not generate this approach move (and nobody pressed stop): skip the object
+        if soft and 'details=55' not in str(exc):
             raise GraspAbort(f'{name}: the arm could not generate the move ({exc})')
         raise
     time.sleep(0.6)
@@ -49,9 +44,7 @@ def go(base, name, pos, eul, duration=None, soft=False):
 
 
 def refine_grasp(base, cam, X, g):
-    """Close-range refinement at the pre-grasp pose (any object): re-segment the target from the dense close-up cloud (local table height,
-    points above it, the cluster at the planned grasp) and re-run the SAME grasp synthesis on it. Aborts if the result disagrees with
-    the far-range plan by more than MAX_CORRECTION. Returns (synthesis dict, local table height, close-up object cloud)."""
+    """Close-range refinement at the pre-grasp pose (any object)."""
     from perceive import pcd, synthesize_grasp, P as PP
     time.sleep(1.0)
     T = pose_to_matrix(base.GetMeasuredCartesianPose()) @ X
@@ -71,7 +64,7 @@ def refine_grasp(base, cam, X, g):
         raise GraspAbort(f'close-range check: only {ring.sum()} table points around the object')
     table_local = float(np.median(pb[ring, 2]))
     print(f'   local table height {table_local:.4f} m (plane fit said {plane_z:.4f}, diff {(table_local - plane_z) * 1000:.1f} mm)', flush=True)
-    if abs(table_local - plane_z) > 0.02:                      # no abort: the dense close-up (measured from the pre-grasp pose) is the height the fingertips are planned on
+    if abs(table_local - plane_z) > 0.02:
         print(f'   local table height differs from the far-range plane by more than 20 mm: continuing with the close-range height {table_local:.4f} m', flush=True)
     plane2 = plane.copy()
     plane2[3] = -(plane[0] * mid[0] + plane[1] * mid[1] + plane[2] * table_local)       # same orientation, through the local table height
@@ -90,7 +83,7 @@ def refine_grasp(base, cam, X, g):
     c_far, c_close = np.array(g['centroid'][:2]), obj[:, :2].mean(0)
     shift = float(np.linalg.norm(c_close - c_far))
     print(f'   close-range object: {len(obj)} points, centroid ({c_close[0]:.4f}, {c_close[1]:.4f}), {shift * 1000:.1f} mm from the far-range centroid', flush=True)
-    if shift > MAX_CORRECTION:                                                         # compare WHERE THE OBJECT IS, not the grasp point (the re-synthesis may pick a better one)
+    if shift > MAX_CORRECTION:
         raise GraspAbort('close-range object position disagrees with the far-range one - aborting before the descent')
     res = synthesize_grasp(obj, plane2, figs=False)
     print(f'   close-range grasp ({res["method"]}): grasp point ({res["mid"][0]:.4f}, {res["mid"][1]:.4f}) '
@@ -122,7 +115,7 @@ def main(cam=None, media_dir=None):
             res, table_local, shift_xy = refine_grasp(base, cam, X, g)
             g2 = dict(g)
             g2.update(midpoint=res['mid'].tolist(), grasp_axis=res['gax'].tolist(), approach=res['app'].tolist(), obj_height=res['obj_height'])
-            g3 = dict(g)                                       # fallback: the far-range grasp the plan already validated, moved to the measured object position
+            g3 = dict(g)
             g3['midpoint'] = [g['midpoint'][0] + shift_xy[0], g['midpoint'][1] + shift_xy[1], g['midpoint'][2]]
             q_now = np.array([a.value for a in base.GetMeasuredJointAngles().joint_angles])
             T_now = pose_to_matrix(base.GetMeasuredCartesianPose())
@@ -133,7 +126,7 @@ def main(cam=None, media_dir=None):
                 if cand[5]:
                     chosen = (cand, gg)
                     break
-            if chosen is None:                                  # last resort: the plan's own (validated) orientation, only translated to the measured object position
+            if chosen is None:
                 gg = g3
                 poses3, G3, tz3, wr3 = build(gg, T_now, tilt_deg=tilt, table_z=table_local, flip=plan0.get('jaw_flip', False))
                 ok3, rows3 = ik_chain(base, poses3, q_now, REFINE_MAX_JOINT_DEG)
@@ -169,7 +162,7 @@ def main(cam=None, media_dir=None):
             print(f'   after lift gripper at {held:.2f} (was {pos:.2f}) -> {"HOLDING" if abs(held - pos) < 0.12 else "LOST?"}', flush=True)
             time.sleep(3.0)
             plan = json.load(open('plan.json'))
-            if plan.get('place'):                             # carry the object to a free spot on the table, lower it, let go
+            if plan.get('place'):
                 slot = np.array(plan['place']['slot_xy'])
                 above, put, eul = place_poses(poses, G, slot, plan['place']['dz'], plan['place'].get('yaw_deg', 0), PLACE_EXTRA)
                 go(base, f'carry to the free slot ({slot[0]:.3f}, {slot[1]:.3f})', above, eul, duration=DUR['lift'] + 3.0)

@@ -36,7 +36,7 @@ class Tee:
 
 
 def sub(cmd):
-    """Run a pipeline script; returns (returncode, its stdout + stderr without plotting noise)."""
+    """Run a pipeline script."""
     res = subprocess.run([sys.executable, '-u'] + cmd, capture_output=True, text=True)
     keep = lambda t: '\n'.join(l for l in t.splitlines() if not any(n in l for n in NOISE))
     out, err = keep(res.stdout), keep(res.stderr)
@@ -47,7 +47,7 @@ def sub(cmd):
 
 
 def add_zone(x, y, r):
-    """Objects inside a zone (already placed / skipped) are ignored by the locator and by perception."""
+    """Objects inside a zone (already placed / skipped) are ignored."""
     zones = json.load(open(EXCL)) if os.path.exists(EXCL) else []
     zones.append([float(x), float(y), float(r)])
     json.dump(zones, open(EXCL, 'w'))
@@ -73,11 +73,10 @@ SCAN_JOINTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cal
 
 
 def to_scan_pose(b):
-    """Get to the observation pose from wherever the arm was left. A ladder, so a bad parking pose (tilted tool, twisted wrist, low over the
-    table) cannot stop a run: lift straight up -> joint-space move if the scan joints are known -> IK move -> as a last resort the arm's own Home."""
+    """Get to the observation pose from wherever the arm was left."""
     p = b.GetMeasuredCartesianPose()
     print(f'start tool xyz ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})', flush=True)
-    if p.z < 0.15:                                                    # first get clear of the table with a velocity-controlled vertical lift
+    if p.z < 0.15:
         print(f'  lifting straight up from z={p.z:.3f} ...', flush=True)
         try:
             lift_up(b, dz=0.17 - p.z)
@@ -110,13 +109,13 @@ def to_scan_pose(b):
             print(f'  {name} failed: {type(exc).__name__}: {str(exc)[:80]}', flush=True)
     else:
         raise RuntimeError('could not reach the scan pose from the current arm pose')
-    if not os.path.exists(SCAN_JOINTS_FILE):                          # remember the scan configuration for direct joint-space moves
+    if not os.path.exists(SCAN_JOINTS_FILE):
         json.dump([a.value for a in b.GetMeasuredJointAngles().joint_angles], open(SCAN_JOINTS_FILE, 'w'))
         print(f'  saved the scan joints to {os.path.relpath(SCAN_JOINTS_FILE)}', flush=True)
 
 
 def observe_once(cam, run):
-    """Move above the table and take the point clouds of the fixed viewpoints ONCE; every object is then picked from this one observation."""
+    """Move above the table and take the point clouds of the fixed viewpoints ONCE."""
     sd = f'{run}/scan'
     for s in ('01_observation', '02_pointclouds/raw_views_npz'):
         os.makedirs(f'{sd}/{s}', exist_ok=True)
@@ -131,7 +130,7 @@ def observe_once(cam, run):
 
 
 def pick_object(k, cam, run):
-    """Pick the k-th object (nearest to the base first) of the single observation and put it back where it was. Returns (status, info)."""
+    """Pick the k-th object (nearest to the base first) of the single observation and put it back."""
     od = f'{run}/object_{k}'
     for s in ('03_perception_figures', '02_pointclouds', '04_execution'):
         os.makedirs(f'{od}/{s}', exist_ok=True)

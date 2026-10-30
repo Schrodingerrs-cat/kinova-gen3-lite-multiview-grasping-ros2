@@ -1,9 +1,4 @@
-"""ROS 2 hardware layer for the HW6 pipeline (Humble, ros2_kortex driver + MoveIt + realsense2_camera).
-
-Replaces the Kortex-API calls of common.py: joint states / TF for the measured pose, FollowJointTrajectory for joint moves, /compute_ik and
-/compute_cartesian_path (MoveIt) for IK and straight-line moves, GripperCommand for the gripper, image topics for the D405.
-The arm's trajectories go straight to the driver's controller (/joint_trajectory_controller), not through MoveIt's execution.
-"""
+"""ROS 2 hardware layer: joint states, TF, trajectories, MoveIt IK, gripper and camera topics."""
 import time
 
 import numpy as np
@@ -38,7 +33,7 @@ def matrix(p, q):
 class Robot(Node):
     def __init__(self):
         super().__init__('hw6_robot')
-        self._ex = SingleThreadedExecutor()                  # own executor: the camera thread must not share the global one
+        self._ex = SingleThreadedExecutor()
         self._ex.add_node(self)
         self.q = None
         self.create_subscription(JointState, '/joint_states', self._js, 10)
@@ -69,7 +64,6 @@ class Robot(Node):
         ok &= self.arm.wait_for_server(timeout_sec=timeout) and self.grip.wait_for_server(timeout_sec=timeout)
         return ok
 
-    # ---- measured state -------------------------------------------------------------------------------------------------------------
     def joints_deg(self):
         self.spin_until(lambda: self.q is not None, 5.0)
         return np.degrees(self.q)
@@ -80,7 +74,6 @@ class Robot(Node):
         t = self.tfbuf.lookup_transform(BASE, TOOL, rclpy.time.Time()).transform
         return matrix([t.translation.x, t.translation.y, t.translation.z], [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w])
 
-    # ---- motion ---------------------------------------------------------------------------------------------------------------------
     def send_joint_path(self, waypoints_rad, times_s, velocities=None, timeout=120.0):
         traj = JointTrajectory(); traj.joint_names = JOINTS
         for i, (q, t) in enumerate(zip(waypoints_rad, times_s)):
@@ -105,7 +98,7 @@ class Robot(Node):
             raise RuntimeError(f'arm trajectory failed: {res.result().result.error_string}')
 
     def move_joints(self, q_deg, duration):
-        """Joint-space move from the current joints to q_deg in `duration` s: minimum-jerk profile, zero velocity at both ends."""
+        """Joint-space move from the current joints to q_deg in `duration` s."""
         q0, q1 = np.array(self.q), np.radians(q_deg)
         n = max(8, int(duration * 8))
         s = np.linspace(0.0, 1.0, n + 1)
@@ -137,7 +130,7 @@ class Robot(Node):
         return ps
 
     def move_line(self, T_goal, duration):
-        """Straight-line tool move to T_goal (MoveIt Cartesian path, then the driver executes the joint path)."""
+        """Straight-line tool move to T_goal."""
         req = GetCartesianPath.Request()
         req.group_name, req.link_name, req.max_step, req.avoid_collisions = GROUP, TOOL, 0.005, False
         req.header.frame_id = BASE
@@ -158,7 +151,6 @@ class Robot(Node):
             g.cancel_goal_async()
             self.spin_until(lambda: False, 0.3)
 
-    # ---- gripper --------------------------------------------------------------------------------------------------------------------
     def gripper(self, position, effort=20.0, timeout=10.0):
         """0.0 open ... 0.8 closed (GripperCommand)."""
         goal = GripperCommand.Goal(); goal.command.position = float(position); goal.command.max_effort = float(effort)
@@ -166,10 +158,9 @@ class Robot(Node):
         res = fut.result().get_result_async(); self.spin_until(res.done, timeout)
         return res.result().result
 
-    # ---- camera ---------------------------------------------------------------------------------------------------------------------
     def grab(self, timeout=5.0):
-        """(color BGR uint8, depth metres float32, K 3x3) from the latest synchronised-enough camera messages."""
-        for k in ('color', 'depth'):                       # camera_info is latched (sent once): keep it, wait for fresh images
+        """(color BGR uint8, depth metres float32, K 3x3) from the latest camera messages."""
+        for k in ('color', 'depth'):
             self._img.pop(k, None)
         if not self.spin_until(lambda: len(self._img) == 3, timeout):
             raise RuntimeError('no camera frames: is realsense2_camera running with align_depth.enable:=true ?')

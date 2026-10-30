@@ -1,4 +1,4 @@
-"""Shared helpers for the real-arm HW6 pipeline: Kortex connection, poses, D405, tag detection."""
+"""Shared helpers: arm, camera, motion and gripper (Kortex API; ROS 2 via ros2_iface)."""
 import os
 import sys
 
@@ -15,7 +15,6 @@ from utilities import DeviceConnection
 ARM_IP = '192.168.1.10'
 CREDENTIALS = ('admin', 'admin')
 
-# Calibration tag: ArUco 4x4 ID 0 (decodes as DICT_4X4_50). TAG_SIZE is the BLACK outer square.
 TAG_DICT = cv2.aruco.DICT_4X4_50
 TAG_ID = 0
 TAG_SIZE = 0.100  # m
@@ -28,11 +27,7 @@ def connect():
 
 
 def pose_to_matrix(p):
-    """Kortex tool pose (x,y,z m; theta x,y,z deg) -> 4x4 base<-tool.
-
-    Kinova convention R = Rz(tz) Ry(ty) Rx(tx), i.e. scipy extrinsic 'xyz'. The pivot-calibration
-    residual in solve_tag.py is what confirms this convention on the real arm.
-    """
+    """Kortex tool pose."""
     T = np.eye(4)
     T[:3, :3] = R.from_euler('xyz', [p.theta_x, p.theta_y, p.theta_z], degrees=True).as_matrix()
     T[:3, 3] = [p.x, p.y, p.z]
@@ -72,7 +67,6 @@ class D405:
         depth = np.asanyarray(frames.get_depth_frame().get_data()).astype(np.float32) * self.depth_scale
         return color, depth
 
-    # --- continuous recording: one thread owns the pipeline, everyone else reads its latest frame ---
     def start_recording(self, path, fps=None):
         fps = fps or self.fps
         import threading as _th
@@ -154,8 +148,7 @@ class D405:
 
 
 def detect_tag(color, K, dist):
-    """Return (T_cam_tag 4x4, corners 4x2) for TAG_ID, or None. Tag frame (OpenCV convention):
-    origin at the centre, x right, y up in the tag image, z out of the tag toward the viewer."""
+    """Return (T_cam_tag 4x4, corners 4x2) for TAG_ID, or None."""
     det = cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(TAG_DICT))
     corners, ids, _ = det.detectMarkers(cv2.cvtColor(color, cv2.COLOR_BGR2GRAY))
     if ids is None or TAG_ID not in ids.ravel():
@@ -163,7 +156,6 @@ def detect_tag(color, K, dist):
     c = corners[list(ids.ravel()).index(TAG_ID)].reshape(4, 2).astype(np.float64)
     h = TAG_SIZE / 2
     obj = np.array([[-h, h, 0], [h, h, 0], [h, -h, 0], [-h, -h, 0]], dtype=np.float64)
-    # detector corners are ordered TL, TR, BR, BL, matching the order above
     ok, rvec, tvec = cv2.solvePnP(obj, c, K, dist, flags=cv2.SOLVEPNP_IPPE_SQUARE)
     if not ok:
         return None
@@ -173,7 +165,6 @@ def detect_tag(color, K, dist):
     return T, c
 
 
-# ---- Motion (hard-bounded; everything stays above the base protection zone) ----
 import threading
 import time
 
@@ -186,16 +177,15 @@ SAFETY_ON = bool(_S.get('enabled', True))
 
 
 def joint_cap(deg):
-    """Per-move joint-step cap; unlimited when software safety limits are disabled in config.yaml."""
+    """Per-move joint-step cap."""
     return deg if SAFETY_ON else 360.0
 
 
 BOUNDS = {'x': tuple(_S['bounds']['x']), 'y': tuple(_S['bounds']['y']), 'z': (_S['z_min_near_zone'], _S['bounds']['z_max'])}
 
 
-# Base protection zone: cylinder, axis at (x=-0.05, y=0), radius 0.35, height 0.17 (read from the arm).
 ZONE_AXIS_XY, ZONE_RADIUS = tuple(_S['zone']['axis_xy']), _S['zone']['radius']      # arm's base protection zone (cylinder)
-ZONE_MARGIN = _S['zone']['margin']          # keep the tool origin this far outside the cylinder radius when low
+ZONE_MARGIN = _S['zone']['margin']
 Z_MIN_NEAR, Z_MIN_FAR = _S['z_min_near_zone'], _S['z_min_far_from_zone']
 
 
@@ -215,7 +205,7 @@ def check_bounds(x, y, z):
 
 
 def move_to(base, x, y, z, theta_x, theta_y, theta_z, speed=0.03, rot_speed=10.0, timeout=90):
-    """Blocking Cartesian move of the tool to a pose; returns True on ACTION_END."""
+    """Blocking Cartesian move of the tool to a pose."""
     check_bounds(x, y, z)
     base.SetServoingMode(Base_pb2.ServoingModeInformation(servoing_mode=Base_pb2.SINGLE_LEVEL_SERVOING))
     done, result = threading.Event(), {}
@@ -249,7 +239,7 @@ def _wrap180(d):
 
 
 def joint_margin_deg(q_deg):
-    """Smallest distance (deg) of any joint from its limit. Angles come in 0-360; the joint range is +/- limit around 0."""
+    """Smallest distance (deg) of any joint from its limit."""
     lim = np.array(_CFG['robot']['joint_limits_deg'], dtype=float)
     signed = (np.asarray(q_deg, dtype=float) + 180.0) % 360.0 - 180.0
     return float(np.min(lim[:len(signed)] - np.abs(signed)))
@@ -271,11 +261,7 @@ def _ik_seeds(cur_deg):
 
 
 def move_joint(base, x, y, z, theta_x, theta_y, theta_z, duration=None, max_joint_deg=40.0, timeout=90):
-    """Smooth move: IK for the target tool pose, then a joint-space move with a fixed duration.
-
-    All joints start and stop together on a smooth profile (no Cartesian speed cap to hunt around).
-    Refuses if IK wants any joint to move more than max_joint_deg (different arm configuration).
-    """
+    """Smooth move: IK for the target tool pose, then a joint-space move with a fixed duration."""
     check_bounds(x, y, z)
     max_joint_deg = joint_cap(max_joint_deg)
     cur = base.GetMeasuredJointAngles()
@@ -286,14 +272,14 @@ def move_joint(base, x, y, z, theta_x, theta_y, theta_z, duration=None, max_join
         ik.guess.joint_angles.add().value = a.value
     cur_deg = np.array([a.value for a in cur.joint_angles])
     sol, last_exc = None, None
-    for guess in _ik_seeds(cur_deg):                         # the current configuration first, then known-good parking configurations
+    for guess in _ik_seeds(cur_deg):
         ik.guess.Clear()
         for v in guess:
             ik.guess.joint_angles.add().value = float(v)
         try:
             sol = base.ComputeInverseKinematics(ik)
             break
-        except Exception as exc:                             # 'no convergence' / 'outside joint limits' depend on the seed
+        except Exception as exc:
             last_exc = exc
     if sol is None:
         raise last_exc
@@ -301,7 +287,7 @@ def move_joint(base, x, y, z, theta_x, theta_y, theta_z, duration=None, max_join
     delta = _wrap180(sol_deg - cur_deg)
     if np.abs(delta).max() > max_joint_deg:
         raise RuntimeError(f'IK wants a {np.abs(delta).max():.0f} deg joint move (> {max_joint_deg}); refusing')
-    if np.abs(delta).max() < 0.3:          # already there: a zero-length move may never send ACTION_END
+    if np.abs(delta).max() < 0.3:
         return True
     target = cur_deg + delta
     if duration is None:
@@ -312,11 +298,11 @@ def move_joint(base, x, y, z, theta_x, theta_y, theta_z, duration=None, max_join
     return _joint_action(base, target, duration, timeout)
 
 
-SPEED = float(_CFG.get('motion', {}).get('speed_factor', 1.0))      # every arm move runs this many times faster (durations are divided by it)
+SPEED = float(_CFG.get('motion', {}).get('speed_factor', 1.0))
 
 
 def _joint_action(base, target, duration, timeout=90):
-    """Run a joint-space move to `target` (deg) lasting `duration` s (shortened by motion.speed_factor) through the arm's own trajectory generator."""
+    """Run a joint-space move to `target` (deg) lasting `duration` s."""
     duration = duration / SPEED
     base.SetServoingMode(Base_pb2.ServoingModeInformation(servoing_mode=Base_pb2.SINGLE_LEVEL_SERVOING))
     done, result = threading.Event(), {}
@@ -346,7 +332,7 @@ def _joint_action(base, target, duration, timeout=90):
 
 
 def move_to_joints(base, q_deg, duration=None, max_joint_deg=90.0, timeout=90):
-    """Move to explicit joint angles (deg). The straight joint-space path is checked through forward kinematics first."""
+    """Move to explicit joint angles (deg)."""
     cur = np.array([a.value for a in base.GetMeasuredJointAngles().joint_angles])
     delta = _wrap180(np.asarray(q_deg, dtype=float) - cur)
     max_joint_deg = joint_cap(max_joint_deg)
@@ -364,7 +350,6 @@ def move_to_joints(base, q_deg, duration=None, max_joint_deg=90.0, timeout=90):
     return _joint_action(base, cur + delta, duration, timeout)
 
 
-# ---- Gripper: smooth ramps (0 = open, 1 = closed) ----
 def grip_pos(base):
     req = Base_pb2.GripperRequest(); req.mode = Base_pb2.GRIPPER_POSITION
     return base.GetMeasuredGripperMovement(req).finger[0].value
@@ -381,10 +366,7 @@ def _smoothstep(x):
 
 
 def grip_ramp(base, target, rate=0.25, dt=0.04, stall_gap=0.05, stall_steps=3):
-    """Move the gripper to `target` along a minimum-jerk ramp at about `rate` (fraction of the stroke per second).
-
-    While closing, if the fingers lag the command by more than `stall_gap` for `stall_steps` steps in a row the
-    ramp stops and holds where the fingers are (contact). Returns (final position, contact)."""
+    """Move the gripper to `target` along a minimum-jerk ramp at about `rate`."""
     start = grip_pos(base)
     n = max(2, int(abs(target - start) / (rate * dt)))
     lag = 0
@@ -396,20 +378,19 @@ def grip_ramp(base, target, rate=0.25, dt=0.04, stall_gap=0.05, stall_steps=3):
             lag = lag + 1 if cmd - grip_pos(base) > stall_gap else 0
             if lag >= stall_steps:
                 pos = grip_pos(base)
-                grip_cmd(base, min(1.0, pos + 0.04))            # hold just past the stall point so there is some grip force
+                grip_cmd(base, min(1.0, pos + 0.04))
                 time.sleep(0.5)
                 return grip_pos(base), True
     time.sleep(0.6)
     return grip_pos(base), False
 
 
-# ---- Smooth joint-space motion: minimum-jerk trajectory executed as joint-speed commands with position feedback ----
 import signal
 
 from kortex_api.autogen.client_stubs.BaseCyclicClientRpc import BaseCyclicClient
 
 _M = _CFG.get('motion', {})
-_SMOOTH = bool(_M.get('smooth', False))      # measured: no smoother than the arm's built-in joint move (smooth_ab.py)
+_SMOOTH = bool(_M.get('smooth', False))
 _KP, _VMAX, _TOL = float(_M.get('kp', 2.5)), float(_M.get('vmax_deg_s', 30.0)), float(_M.get('tol_deg', 0.2))
 _CYC = {}
 
@@ -434,7 +415,7 @@ def _speeds(v):
 
 
 def _fk_ok(base, q_deg):
-    """Tool-origin bounds check of a joint configuration through the arm's own forward kinematics."""
+    """Tool-origin bounds check of a joint configuration via forward kinematics."""
     if not SAFETY_ON:
         return True
     try:
@@ -448,12 +429,7 @@ def _fk_ok(base, q_deg):
 
 
 def smooth_joint_trajectory(base, q_target_deg, T, dt=0.02):
-    """Move all joints from the measured configuration to q_target along a minimum-jerk profile lasting T seconds.
-
-    Commanded speed = profile feed-forward + _KP * (profile position - measured position), capped at _VMAX deg/s.
-    The path is sampled through forward kinematics and refused if any sample leaves the safety bounds. Any exception
-    or SIGTERM unwinds into zero speed + Stop.
-    """
+    """Move all joints from the measured configuration to q_target along a minimum-jerk profile."""
     cyc = _cyclic()
     q_now = lambda: np.array([a.position for a in cyc.RefreshFeedback().actuators])
     q0 = q_now()
@@ -497,9 +473,8 @@ def smooth_joint_trajectory(base, q_target_deg, T, dt=0.02):
     return True
 
 
-# ---- Recovery helpers (used when the arm is left in an awkward pose and IK cannot converge from it) ----
 def lift_up(base, dz=0.12, speed=0.04 * SPEED, timeout=15.0):
-    """Straight up in the base frame by dz metres using a Cartesian twist (velocity control: needs no IK seed). Always ends with Stop."""
+    """Straight up in the base frame by dz metres using a Cartesian twist."""
     base.SetServoingMode(Base_pb2.ServoingModeInformation(servoing_mode=Base_pb2.SINGLE_LEVEL_SERVOING))
     z0 = base.GetMeasuredCartesianPose().z
     t = Base_pb2.TwistCommand()
@@ -523,7 +498,7 @@ def lift_up(base, dz=0.12, speed=0.04 * SPEED, timeout=15.0):
 
 
 def go_home(base, name='Home', timeout=90):
-    """Run one of the arm's own built-in joint-angle actions (Home, Retract, Packaging, Zero): a known-good joint configuration to recover from."""
+    """Run one of the arm's own built-in joint-angle actions (Home, Retract, Packaging, Zero)."""
     t = Base_pb2.RequestedActionType()
     t.action_type = Base_pb2.REACH_JOINT_ANGLES
     handle = next(a.handle for a in base.ReadAllActions(t).action_list if a.name == name)
@@ -547,7 +522,6 @@ def go_home(base, name='Home', timeout=90):
     return True
 
 
-# ---- ROS 2 backend: HW6_BACKEND=ros2 swaps the Kortex-API hardware layer for ros2_kortex / MoveIt / realsense2_camera (see ros2_iface/) ----
 if os.environ.get('HW6_BACKEND', _CFG.get('backend', 'kortex')) == 'ros2':
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ros2_iface'))
     import backend as _ros_backend

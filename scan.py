@@ -1,10 +1,4 @@
-"""Observe the TABLE from several planned viewpoints; every point cloud is transformed into the BASE frame and saved to scans/scan_k.npz.
-
-The viewpoints are FIXED and simple (calibration/table_views.json, built by tools/make_views.py): the parking pose shifted over the table and tilted about one
-horizontal axis. Nothing here depends on any object.   p_base = T_base_tool(measured) @ X(hand-eye) @ p_cam.
-
-python scan.py --plan    -> list the fixed viewpoints (no motion, no capture)
-"""
+"""Visit the fixed viewpoints and save one base-frame point cloud per view (scans/scan_k.npz)."""
 import json
 import os
 import sys
@@ -16,7 +10,7 @@ from cfg import CFG, HAND_EYE, ROOT
 from common import connect, BaseClient, D405, move_to_joints, pose_to_matrix, _wrap180
 
 _V = CFG['viewpoints']
-SCAN_POSE = _V['scan_pose']                                   # parking / reference observation pose: tool x y z (m), theta x y z (deg)
+SCAN_POSE = _V['scan_pose']
 MOVE_S = float(_V.get('move_duration_s', 6.0))
 JOINT_DEG_PER_S = 12.0
 DEPTH_MIN, DEPTH_MAX = 0.10, 0.70                             # m, valid range from the camera

@@ -16,6 +16,6 @@ def section(name):
 
 
 def load_json(path):
-    """json.load that ignores whole-line // comments (calibration/scan_joints.json keeps the old home configs commented out)."""
+    """json.load that ignores whole-line // comments."""
     import json
     return json.loads('\n'.join(l for l in open(path).read().splitlines() if not l.lstrip().startswith('//')))

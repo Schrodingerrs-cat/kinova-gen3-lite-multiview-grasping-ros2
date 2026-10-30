@@ -1,9 +1,4 @@
-"""Step 4 planning (DRY RUN, no motion): pre-grasp / grasp / lift tool poses from grasp.json.
-
-Jaws close along tool x; the tool z axis is the approach (straight down). TIP_OFFSET is the distance from the
-Kortex tool-frame origin to the grasp point between the pads along tool z -- UNVERIFIED (URDF says 0.130):
-confirm with a ruler before any execution.
-"""
+"""Step 4 planning (DRY RUN, no motion)."""
 import json
 import os
 import sys
@@ -15,8 +10,8 @@ from cfg import ROOT, load_json
 from common import connect, BaseClient, pose_to_matrix, in_safe_bounds, joint_cap, joint_margin_deg, Base_pb2, _wrap180
 
 P = dict(
-    tip_offset=0.035,          # m, tool origin -> fingertips along tool z (MEASURED by touching the table)
-    grasp_height=0.015,        # m: fingertip ends this far above the table (5 cm tall block: pads cover its lower half)
+    tip_offset=0.035,
+    grasp_height=0.015,
     pre_grasp_height=0.10,     # m above the grasp point
     lift_height=0.12,          # m above the grasp point
     max_joint_deg=60.0,
@@ -29,9 +24,7 @@ P['max_joint_deg'] = joint_cap(P['max_joint_deg'])
 
 
 def build(g, T_start, tip_offset=None, table_z=None, tilt_deg=0.0, flip=False):
-    """Tool poses for the grasp in grasp.json. The tool z axis is the APPROACH vector from the grasp synthesis (HW 6 Step 3: orthogonal to the
-    PCA major axis and to the grasp axis; usually from above, but a side approach is fine), the jaws close along tool x. tilt_deg rotates the
-    approach about the jaw axis; the plan check searches it with IK. The pre-grasp is backed off ALONG the approach direction."""
+    """Tool poses for the grasp in grasp.json."""
     tip = P['tip_offset'] if tip_offset is None else tip_offset
     a, b, c, d = g['table_plane']
     mx, my = g['midpoint'][:2]
@@ -39,27 +32,27 @@ def build(g, T_start, tip_offset=None, table_z=None, tilt_deg=0.0, flip=False):
         table_z = -(a * mx + b * my + d) / c
     app = np.array(g.get('approach', [0.0, 0.0, -1.0]), dtype=float)
     app /= np.linalg.norm(app)
-    if abs(app[2]) >= 0.5:                      # from above: fingertips low on the object (scaled with its measured height)
+    if abs(app[2]) >= 0.5:
         gh = float(np.clip(0.4 * g['obj_height'], 0.008, 0.03)) if g.get('obj_height') else P['grasp_height']
-    else:                                       # side approach: contact at the height of the grasp-point pair
+    else:
         gh = max(float(g['midpoint'][2]) - table_z, 0.012)
     G = np.array([mx, my, table_z + gh])        # grasp point between the pads
     gax = np.array(g['grasp_axis'], dtype=float)
     gax = gax - app * (gax @ app)               # jaw axis made orthogonal to the approach
     gax /= np.linalg.norm(gax)
     best = None
-    for x_t in (gax, -gax):                     # the jaws are symmetric: pick the sign needing the least wrist rotation
+    for x_t in (gax, -gax):
         R_t = np.column_stack([x_t, np.cross(app, x_t), app])
         ang = np.degrees(np.linalg.norm(R.from_matrix(T_start[:3, :3].T @ R_t).as_rotvec()))
         if best is None or ang < best[0]:
             best = (ang, x_t)
     x_t = best[1]
-    if flip:                                    # the other jaw direction (needs more wrist rotation, but may be the only one the arm reaches)
+    if flip:
         x_t = -x_t
         best = (np.degrees(np.linalg.norm(R.from_matrix(T_start[:3, :3].T @ np.column_stack([x_t, np.cross(app, x_t), app])).as_rotvec())), x_t)
     y0 = np.cross(app, x_t)
     phi = np.radians(tilt_deg)
-    z_a = app * np.cos(phi) + y0 * np.sin(phi)  # approach tilted about the jaw axis (0 = as synthesised)
+    z_a = app * np.cos(phi) + y0 * np.sin(phi)
     R_t = np.column_stack([x_t, np.cross(z_a, x_t), z_a])
     build.approach = z_a
     origin = G - z_a * tip                      # tool origin that puts the fingertip ends on G
@@ -70,8 +63,7 @@ def build(g, T_start, tip_offset=None, table_z=None, tilt_deg=0.0, flip=False):
     return poses, G, table_z, best[0]
 
 def place_poses(poses, G, slot_xy, dz, yaw_deg, extra):
-    """Tool poses to carry the held object to a table slot: translate the grasp to the slot and optionally turn the whole tool+object about the
-    vertical axis through the grasp point (the object's heading after placing is irrelevant, but the wrist may only reach the slot turned)."""
+    """Tool poses to carry the held object to a table slot."""
     Rz = R.from_euler('z', yaw_deg, degrees=True)
     origin, eul = poses['grasp']
     eul_new = (Rz * R.from_euler('xyz', eul, degrees=True)).as_euler('xyz', degrees=True)
@@ -93,11 +85,11 @@ _EXTRA_SEEDS = _load_seeds()
 
 
 def ik_chain(base, poses, q_start, cap=None):
-    """IK + bounds + joint-step check of a pose chain (pre-grasp -> grasp -> lift), each pose seeded with the previous solution."""
+    """IK + bounds + joint-step check of a pose chain (pre-grasp -> grasp -> lift)."""
     qq, rows, ok_all = np.array(q_start, dtype=float).copy(), {}, True
     for name, (pos, eul) in poses.items():
         sol, dq = None, None
-        for seed in (qq, np.asarray(q_start, dtype=float), *_EXTRA_SEEDS):      # IK is seed dependent: try the chain, the start and the parking joints
+        for seed in (qq, np.asarray(q_start, dtype=float), *_EXTRA_SEEDS):
             d = Base_pb2.IKData(); cp = d.cartesian_pose
             cp.x, cp.y, cp.z, cp.theta_x, cp.theta_y, cp.theta_z = *pos, *eul
             for v in seed:
@@ -116,9 +108,7 @@ def ik_chain(base, poses, q_start, cap=None):
 
 
 def plan_tilt(base, g, T_start, q_start, tip=None, table_z=None, verbose=True, cap=None):
-    """Search the approach tilt about the jaw axis (smallest first) for the first one whose whole pose chain passes IK.
-    Used by the plan stage AND again after the close-range refinement (a different jaw axis needs its own tilt).
-    Returns (tilt, poses, G, table_z, wrist, ok_all, rows); if none works, the tilt-0 result with ok_all False."""
+    """Search the approach tilt about the jaw axis for the first one whose pose chain passes IK."""
     chosen = None
     for flip in (False, True):                                                  # jaw direction needing the least wrist rotation first
         for tilt in P['tilt_candidates_deg']:
@@ -158,7 +148,7 @@ def main():
                   f'IK {"FAIL" if dq is None else f"max joint step {dq:.0f} deg"} -> {"OK" if ok else "NOT OK"}')
             plan[name] = dict(xyz=pos.tolist(), theta=eul.tolist(), joints=None if sol is None else sol.tolist())
         place = None
-        if os.path.exists('place_slots.json') and ok_all:             # pick the first free slot the arm can also carry the object to and lower it at
+        if os.path.exists('place_slots.json') and ok_all:
             q_lift = rows['lift'][5]
             a_, b_, c_, d_ = g['table_plane']
             slots = sorted(json.load(open('place_slots.json')), key=lambda s: np.hypot(s[0] - G[0], s[1] - G[1]))      # nearest the pick first
@@ -177,7 +167,7 @@ def main():
                 ok_all = False
                 print('no reachable free place slot', flush=True)
         json.dump(dict(tip_offset=P['tip_offset'] if tip is None else tip, approach_tilt_deg=tilt, jaw_flip=bool(plan_tilt.flip), grasp_point=G.tolist(), poses=plan, place=place), open('plan.json', 'w'), indent=1)
-        try:                                    # Step 4 figure: tool frames at pre-grasp / grasp / lift over the object cloud
+        try:
             from perceive import save_fig
             from scipy.spatial.transform import Rotation as Rr
             obj = np.load('object_cloud.npy')

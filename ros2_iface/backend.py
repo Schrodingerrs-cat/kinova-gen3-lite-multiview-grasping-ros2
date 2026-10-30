@@ -1,5 +1,4 @@
-"""ROS 2 backend for common.py: replaces the Kortex-API pieces (connection, BaseClient calls, joint/Cartesian moves, gripper, D405) so the unchanged
-pipeline (run_pick / scan / perceive / grasp_plan / grasp_exec) runs on ros2_kortex + MoveIt + realsense2_camera. Selected with HW6_BACKEND=ros2."""
+"""ROS 2 backend for common.py."""
 import os
 import sys
 import threading
@@ -17,7 +16,7 @@ from sensor_msgs.msg import CameraInfo, Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from robot_ros import Robot, COLOR, DEPTH, INFO   # noqa: E402
 
-GRIP_CLOSED = 0.81           # finger joint (rad) of a fully closed, empty gripper, measured in the air (0 = open; the joint limit is 0.85)
+GRIP_CLOSED = 0.81
 
 
 def _init():
@@ -29,7 +28,6 @@ def _deg360(q):
     return np.mod(np.asarray(q, dtype=float), 360.0)
 
 
-# ---- minimal stand-ins for the protobuf messages the pipeline fills ----
 class _Val:
     def __init__(self, v=0.0): self.value = v
 
@@ -101,7 +99,7 @@ def BaseClient(router):
 
 
 class D405:
-    """Camera through the realsense2_camera topics. A background thread spins the node so frames keep arriving (and can be recorded)."""
+    """Camera through the realsense2_camera topics."""
     def __init__(self):
         _init()
         self.node = Node('hw6_camera')

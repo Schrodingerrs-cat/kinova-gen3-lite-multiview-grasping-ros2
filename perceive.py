@@ -1,7 +1,4 @@
-"""HW6 Steps 1.1-3 on the saved real-arm scans (offline; the arm does not move).
-
-Writes figures/*.png (one per deliverable) and grasp.json (grasp pose inputs for execution).
-"""
+"""HW 6 steps 1.1-3: merge the scans, find the table, cluster objects, synthesise a grasp."""
 import json
 import sys
 import math
@@ -11,7 +8,6 @@ import matplotlib
 matplotlib.use('Agg')
 import os as _os
 import mpl_toolkits
-# the system's old mpl_toolkits (a regular package) shadows the venv's; prefer the venv copy
 mpl_toolkits.__path__.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(matplotlib.__file__)), 'mpl_toolkits'))
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
@@ -27,22 +23,21 @@ P = dict(
     ransac_dist=0.004, ransac_iters=500,                      # 1.3 table plane
     min_height=0.015,                                         # 1.4 keep points this far above the plane
     cluster_eps=0.012, cluster_min_pts=40,                    # 1.5 DBSCAN
-    obj_dim_min=0.03, obj_dim_max=0.09, obj_h_min=0.040, obj_h_max=0.080,   # block: footprint and HEIGHT-ABOVE-TABLE ranges (m); white block 3x5 cm, 5 cm tall                       # target bbox largest side (m)
+    obj_dim_min=0.03, obj_dim_max=0.09, obj_h_min=0.040, obj_h_max=0.080,
     normal_radius=0.012, normal_max_nn=40,                    # 2.2
     mu=0.5, width_min=0.02, width_max=0.075, max_pts=1500,    # 2.3 friction coeff, gripper widths
     tag_crosscheck=False,                                     # tag has been removed from the table
     tie_tol=0.003, max_axis_tilt_deg=10.0, max_approach_tilt_deg=5.0, top_min_height=0.035, prefer_short_side=True,   # 3b: top-face points are this far above the table
-       # grasp axis must be this close to horizontal (table-top object)
     denoise_radius=0.008, denoise_min_nb=12,                  # drop isolated halo points per cluster
     icp_align=True, icp_iters=40, icp_max_dist=0.03, icp_trim=0.7,   # align scans to scan 0 before merging
 )
 
 from cfg import CFG, section as _section
-P.update(_section('perception'))          # config.yaml (+ object-derived defaults) overrides the defaults above
+P.update(_section('perception'))
 
 
 def save_ply(path, xyz, rgb=None):
-    """Write a binary PLY (xyz float32 + rgb uint8); opens in MeshLab / CloudCompare / Open3D."""
+    """Write a binary PLY (xyz float32 + rgb uint8)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     xyz = np.asarray(xyz, dtype=np.float32).reshape(-1, 3)
     n = len(xyz)
@@ -61,7 +56,7 @@ def save_ply(path, xyz, rgb=None):
 
 
 def save_fig(name, layers, markers=(), arrows=(), view=(35, -60)):
-    """layers: [(xyz, color, size, label)]; markers: [(xyz Nx3, color, size, label)]; arrows: [(start, end, color, label)]."""
+    """layers: [(xyz, color, size, label)]."""
     os.makedirs('figures', exist_ok=True)
     fig = plt.figure(figsize=(7, 6))
     ax = fig.add_subplot(111, projection='3d')
@@ -100,8 +95,7 @@ def pcd(xyz, rgb=None):
 
 
 def antipodal(pts, nrm, centroid):
-    """HW 6 Step 2.3: among the pairs whose two normals both lie inside the friction cone, the pair whose grasp POINTS are closest to the centroid
-    (mean of the two distances; P['pair_criterion'] = midpoint ranks by the pair midpoint instead). Returns (score, -cone quality, p1, p2) or None."""
+    """HW 6 Step 2.3: antipodal pair inside the friction cone nearest the centroid."""
     cos_t = 1.0 / math.sqrt(1.0 + P['mu'] ** 2)
     if len(pts) > P['max_pts']:
         sel = np.random.default_rng(0).choice(len(pts), P['max_pts'], replace=False)
@@ -140,7 +134,7 @@ def kabsch_T(src, dst):
 
 
 def icp_align(src, dst):
-    """Trimmed point-to-point ICP: 4x4 transform taking src onto dst (both already near each other)."""
+    """Trimmed point-to-point ICP."""
     tree, T, cur = cKDTree(dst), np.eye(4), src.copy()
     rms = None
     for _ in range(P['icp_iters']):
@@ -160,7 +154,7 @@ EXCL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'placed_obj
 
 
 def exclusion_zones():
-    """[[x, y, radius], ...]: objects already placed (or skipped) in this session; clusters inside a zone are not pickable."""
+    """[[x, y, radius], ...]."""
     try:
         return json.load(open(EXCL_PATH))
     except Exception:
@@ -172,7 +166,7 @@ def is_excluded(xy):
 
 
 def select_target(clusters, heights=None):
-    """Which object to grasp when there are several (object.selection): nearest to the robot base | largest | tallest."""
+    """Which object to grasp when there are several (object.selection)."""
     rule = CFG.get('object', {}).get('selection', 'nearest')
     if rule == 'largest':
         key = [-len(c) for c in clusters]
@@ -184,12 +178,7 @@ def select_target(clusters, heights=None):
 
 
 def synthesize_grasp(obj, plane, figs=False):
-    """HW 6 grasp synthesis for ONE object cloud (any shape): centroid, surface normals oriented toward it, antipodal grasp-point pair
-    inside the friction cone closest to the centroid, approach vector orthogonal to the PCA major axis and to the grasp axis.
-
-    If no valid antipodal pair exists (thin or curved objects: the side faces are barely observed, or the pair's midpoint falls in free air),
-    the jaws close across the object's body at its middle instead (local PCA of the point nearest the centroid).
-    Returns dict(centroid, p1, p2, mid, gax, app, width, method, quality, obj_height, ...)."""
+    """HW 6 grasp synthesis for ONE object cloud (any shape)."""
     plane = np.asarray(plane, dtype=float)
     n_pl, d_pl = plane[:3], plane[3]
     centroid = obj.mean(0)
@@ -218,7 +207,6 @@ def synthesize_grasp(obj, plane, figs=False):
         save_fig('s2_2_normals', [(obj, 'tab:green', 3, 'object')], [(centroid, 'gold', 100, 'centroid')],
                  [(pts[i], pts[i] + 0.015 * nrm[i], 'tab:blue', 'surface normals (oriented to the centroid)' if j == 0 else None) for j, i in enumerate(sel)])
 
-    # 2.3 antipodal pair: both normals inside the friction cone, closest to the centroid
     best = antipodal(pts, nrm, centroid)
     ev, evec = np.linalg.eigh(np.cov((obj - centroid).T))
     major = evec[:, np.argmax(ev)]
@@ -239,11 +227,10 @@ def synthesize_grasp(obj, plane, figs=False):
         gax = (p2 - p1) / np.linalg.norm(p2 - p1)
         width = float(np.linalg.norm(p2 - p1))
         print(f'[2.3] antipodal pair: p1={p1.round(4)} p2={p2.round(4)} width={width * 1000:.1f} mm, mean grasp-point distance to the centroid={md * 1000:.1f} mm, cone quality={quality:.3f}', flush=True)
-        # 3 approach vector: orthogonal to the PCA major axis and to the grasp axis
         app = np.cross(major, gax)
         note = 'cross(PCA major axis, grasp axis)'
         if degenerate or np.linalg.norm(app) < 1e-3:
-            app = np.array([0, 0, -1.0]) - gax * (-gax[2])                  # PCA axes ill-defined: straight down, made orthogonal to the grasp axis
+            app = np.array([0, 0, -1.0]) - gax * (-gax[2])
             note = 'vertical made orthogonal to the grasp axis (PCA major axis ill-defined: near-isotropic object)'
         app /= np.linalg.norm(app)
         if abs(app[2]) >= 0.5:
@@ -253,7 +240,7 @@ def synthesize_grasp(obj, plane, figs=False):
     else:
         method = 'across_body'
         xy = obj[:, :2]
-        gi = int(np.argmin(np.linalg.norm(xy - xy.mean(0), axis=1)))        # object point nearest the centroid (a curved object's centroid can be off its body)
+        gi = int(np.argmin(np.linalg.norm(xy - xy.mean(0), axis=1)))
         local = xy[np.linalg.norm(xy - xy[gi], axis=1) < P.get('local_radius_m', 0.04)]
         w_, V_ = np.linalg.eigh(np.cov((local - local.mean(0)).T))
         body = V_[:, np.argmax(w_)]
@@ -320,7 +307,6 @@ def main():
             print(f'[1.1] ICP scan {k} -> scan {ref_i}: shift {np.linalg.norm(T[:3, 3]) * 1000:.1f} mm, '
                   f'rot {rot:.2f} deg, trimmed rms {rms * 1000:.2f} mm')
             clouds[k] = clouds[k] @ T[:3, :3].T + T[:3, 3]
-    # 1.0 each viewpoint's cloud, in the base frame, one colour per view (+ where the camera was)
     try:
         names = json.load(open('scans/view_names.json'))
     except Exception:
@@ -348,7 +334,6 @@ def main():
     save_fig('s1_1_merged', [(xyz_m, np.asarray(merged.colors), 1, 'merged + downsampled')], view=(40, -60))
     save_ply('pointclouds/merged_downsampled.ply', xyz_m, np.asarray(merged.colors))
 
-    # 1.2 workspace crop (a square around the detected object when run_pick passes --center, else the configured box)
     lo, hi = np.array(P['ws_min'], dtype=float), np.array(P['ws_max'], dtype=float)
     if '--center' in sys.argv and P.get('crop_half_size_m'):
         ci = sys.argv.index('--center')
@@ -362,7 +347,6 @@ def main():
     save_fig('s1_2_workspace', [(xyz_w, np.asarray(ws.colors), 1, 'workspace crop')])
     save_ply('pointclouds/workspace_filtered.ply', xyz_w, np.asarray(ws.colors))
 
-    # 1.3 RANSAC table plane (seeded: the same scans always give the same table, clusters and objects), then a least-squares refit on its inliers
     plane, inl = ws.segment_plane(P['ransac_dist'], 3, P['ransac_iters'])
     for _ in range(3):
         q_in = xyz_w[inl]
@@ -372,7 +356,7 @@ def main():
         sd = np.abs(xyz_w @ nrm + plane[3])
         inl = np.where(sd < P['ransac_dist'])[0]
     a, b, c, d = plane
-    if c < 0:                                  # orient the plane normal upward: height above the table is then positive
+    if c < 0:
         a, b, c, d = -a, -b, -c, -d
         plane = (a, b, c, d)
     print(f'[1.3] plane normal=({a:.3f},{b:.3f},{c:.3f}) -> {len(inl)} inliers, z at x,y=0: {-d / c:.4f} m')
@@ -386,11 +370,11 @@ def main():
     obj_mask = (~mask) & (height > P['min_height'])
     objs, hobj = xyz_w[obj_mask], height[obj_mask]
     n_before = len(objs)
-    if len(objs) > 20:                                    # drop isolated depth-noise specks (same density test as the clusters)
+    if len(objs) > 20:
         nb = np.array([len(v) for v in cKDTree(objs).query_ball_point(objs, P['denoise_radius'])])
         objs, hobj = objs[nb >= P['denoise_min_nb']], hobj[nb >= P['denoise_min_nb']]
     n_dense = len(objs)
-    if P.get('min_view_support', 1) > 1 and len(clouds) >= 2 and len(objs) > 50:     # a real surface is seen by several views; a streak by one
+    if P.get('min_view_support', 1) > 1 and len(clouds) >= 2 and len(objs) > 50:
         r = float(P.get('view_support_radius', 0.006))
         sup = np.zeros(len(objs), int)
         for cl_v in clouds:
@@ -398,7 +382,7 @@ def main():
             if len(near):
                 sup += (cKDTree(near).query(objs, distance_upper_bound=r)[0] < r)
         keep_v = sup >= int(P['min_view_support'])
-        objs, hobj = objs[keep_v], hobj[keep_v]                  # always applied: a conditional fallback made the result flip between runs on the same scans
+        objs, hobj = objs[keep_v], hobj[keep_v]
     print(f'[1.4] object points: {len(objs)} (> {P["min_height"] * 1000:.0f} mm above plane; {n_before - n_dense} noise points and {n_dense - len(objs)} single-view points removed)')
     save_fig('s1_4_objects', [(xyz_w[mask], (0.8, 0.8, 0.8), 0.5, 'table'), (objs, 'tab:red', 3, 'object points')])
     save_ply('pointclouds/objects_above_table.ply', objs)
@@ -411,10 +395,10 @@ def main():
         cl = objs[sel]
         nb = np.array([len(v) for v in cKDTree(cl).query_ball_point(cl, P['denoise_radius'])])
         keep = nb >= P['denoise_min_nb']
-        if keep.sum() >= P.get('min_cluster_points', P['cluster_min_pts']):          # specks of a few dozen points are depth noise, not objects
+        if keep.sum() >= P.get('min_cluster_points', P['cluster_min_pts']):
             h_lo, h_hi = float(hobj[sel][keep].min()), float(hobj[sel][keep].max())      # bottom / top of the cluster above the table plane
             if h_lo > P.get('max_bottom_gap_m', 0.04) or h_hi > P.get('max_object_height_m', 0.15):
-                rejected.append((cl[keep].mean(0), h_lo, h_hi))        # floating in the air or taller than any graspable object: not an object on the table
+                rejected.append((cl[keep].mean(0), h_lo, h_hi))
                 continue
             clusters.append(cl[keep])
             heights.append(h_hi)                                        # top of the object above the table plane
