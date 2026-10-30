@@ -1,0 +1,117 @@
+# HW7 real-robot pipeline configuration. Everything tunable lives here; no code changes needed.
+# Frames: base_link metres / degrees. Tool-frame deltas rotate about the TOOL axes (xyz extrinsic, degrees).
+
+capture:                      # depth -> point cloud
+  edge_window_px: 5            # flying-pixel filter: a pixel is dropped if its window spans more depth than the jump below
+  edge_max_jump_m: 0.0         # flying-pixel filter, OFF: 'range' mode fixes the footprint but deletes 80% of the cube's walls, 'median' keeps walls but barely helps
+  edge_mode: median            # median | range (only used when edge_max_jump_m > 0)
+
+calibration:                  # camera-in-tool transform (from calibration/hand_eye.py) and the measured fingertip offset
+  hand_eye: calibration/hand_eye.json
+  tip_offset_record: calibration/tip_offset_measured.json
+
+object:                       # NO dimensions, shape or colour assumptions: any cluster above the table is an object
+  selection: nearest          # which object to grasp when several are on the table: nearest (to the robot base) | largest | tallest
+
+pipeline:
+  start_delay_s: 10            # countdown before the arm moves, so the object can be placed with hands clear (skip with --no-delay)
+  stages: [observe, perceive, plan, execute]   # observe the TABLE from predetermined viewpoints; add `search` (base sweep that aims views at one object) only if you want it
+
+
+viewpoints:                   # observation of the TABLE: FIXED simple viewpoints (calibration/table_views.json, tools/make_views.py), not aimed at any object
+  # scan_pose: [0.257, 0.020, 0.300, 176.7, 4.7, 104.3]   # config 1 (old home, original camera mounting)
+  scan_pose: [0.244, -0.048, 0.259, -4.3, 179.1, 85.5]   # parking / reference pose: tool x y z (m), theta x y z (deg); also fixes the camera roll of the views
+  table_z: -0.05              # approximate table height used when planning
+  move_duration_s: 6.0        # minimum joint-space move time (longer for big moves, 12 deg/s)
+  planner:                    # candidates = aim point x azimuth x tilt x distance over the table region (perception.ws_min/ws_max)
+    min_views: 2              # the assignment needs at least two meaningfully different viewpoints
+    max_views: 5
+    min_gain: 0.03            # stop adding views once a new one adds less than this fraction of the table (new cells, or cells from a new direction)
+    aim_grid_m: 0.15          # spacing of the aim points over the table
+    azimuth_step_deg: 45      # directions around the aim point the camera may be placed at
+    tilts_deg: [0, 25, 40]    # 0 = straight down; others look at the table obliquely
+    distances_m: [0.38, 0.48] # camera-to-aim-point distance (D405 works well at 0.15 - 0.55)
+    min_camera_z: 0.28        # keep the camera at least this high above the base plane
+    max_joint_deg: 110        # skip a candidate if reaching it needs a bigger single-joint move
+    min_tool_radius_m: 0.22   # keep the tool this far from the robot base axis (no views right on top of the base)
+    max_tool_radius_m: 0.66
+    depth_near_m: 0.15
+    depth_far_m: 0.60
+    max_incidence_deg: 65     # a table cell seen more obliquely than this does not count as covered
+
+motion:
+  speed_factor: 1.25         # all arm moves 25% faster (durations / 1.25)
+  smooth: false                # true = minimum-jerk speed-command executor (measured no smoother; off)
+
+perception:                   # Steps 1.1 - 3 (see perceive.py)
+  min_cluster_points: 300     # a cluster needs at least this many points after denoising to count as an object
+  max_bottom_gap_m: 0.07      # a cluster whose lowest point is further than this above the table plane is not resting on it (depth ghost), not an object
+  max_object_height_m: 0.15   # nothing taller than this is a graspable object
+  min_height: 0.012           # points this far above the table plane are object candidates (m)
+  gripper_max_width_m: 0.085  # an object whose grasp width exceeds this is skipped
+  pair_criterion: grasp_points   # HW 6 Step 2.3: the feasible pair whose grasp POINTS are closest to the centroid
+  pca_degenerate_ratio: 0.7   # 2nd/1st PCA eigenvalue above this = near-isotropic object: the major axis is ill-defined, approach from above
+  max_pair_midpoint_offset_m: 0.025   # an antipodal pair is rejected if its midpoint is farther than this from the centroid (off-centre feature)
+  mid_body_tol: 0.012         # an antipodal pair is rejected if its midpoint is farther than this from the object (curved objects)
+  local_radius_m: 0.04        # fallback (no antipodal pair): the body direction is taken from the points this close to the object point nearest the centroid
+  voxel: 0.004                # downsample leaf (m)
+  icp_align: true             # align each view to view 0 before merging
+  icp_iters: 40
+  icp_max_dist: 0.03
+  icp_trim: 0.7
+  ws_min: [0.22, -0.45, -0.12]    # workspace crop box = the table region that holds objects
+  ws_max: [0.62,  0.45,  0.15]
+  ransac_dist: 0.010          # table plane inlier distance (m): above the depth noise + inter-view mismatch, below min_height (0.015) so objects are not absorbed
+  ransac_iters: 500
+  cluster_eps: 0.012          # Euclidean clustering radius
+  cluster_min_pts: 40
+  locator_eps: 0.02           # coarse single-view object locator (aims the observation viewpoints); looser than the merged-cloud clustering
+  locator_min_pts: 15
+  min_view_support: 2          # an object point must have a neighbour from at least this many different views (removes one-view streaks)
+  view_support_radius: 0.010
+  denoise_radius: 0.008       # drop isolated halo points per cluster
+  denoise_min_nb: 12
+  normal_radius: 0.012        # surface normals
+  normal_max_nn: 40
+  mu: 0.5                     # friction coefficient -> stable-grasp cone
+  width_min: 0.02             # gripper pair-width limits
+  width_max: 0.075
+  max_axis_tilt_deg: 10.0     # jaw axis must be within this of horizontal
+  max_approach_tilt_deg: 5.0
+  prefer_short_side: true     # close the jaws across the narrow side of the top face
+  tag_crosscheck: false
+
+robot:
+  joint_limits_deg: [154.1, 150.1, 150.1, 148.98, 144.97, 148.98]   # Kinova Gen3 Lite joint ranges (+/-)
+
+grasp:                        # Step 4 planning (grasp_plan.py)
+  joint_margin_deg: 6         # an IK solution must stay at least this far inside every joint limit: the arm cannot generate trajectories that hug them
+  tip_offset: 0.035           # m, tool origin -> fingertip ends (MEASURED by touching the table)
+  pre_grasp_height: 0.10      # m above the grasp point
+  lift_height: 0.12
+  max_joint_deg: 60.0
+
+pick_all:                     # several objects: scan the table, pick one, place it at a free spot, rescan, repeat
+  max_objects: 4
+
+place:
+  region: {x: [0.28, 0.50], y: [-0.30, 0.30]}   # where free spots are looked for
+  anchor_xy: [0.32, 0.22]     # prefer free spots near this point
+  clearance_m: 0.07           # a spot must be this far beyond the radius of every object on the table
+  slot_spacing_m: 0.10        # and this far from spots already used
+  min_base_distance_m: 0.38   # and this far from the robot base axis
+
+execution:                    # grasp_exec.py
+  place_extra_height_m: 0.04  # carry the object this much higher than the normal lift
+  max_correction_m: 0.08      # abort only if the close-range centre differs from the far-range plan by more than this (the dense close-range view is the more accurate one)
+  pos_tol_m: 0.006            # abort if a move ends farther than this from its target
+  release: place_back         # after the lift: place_back (lower to the table, open, retreat) | drop (open at the lift height) | none (keep holding)
+  grip_empty: 0.975           # settled gripper position above this = closed on nothing
+  durations_s: {pre_grasp_refined: 3.0, descend_stage1: 4.0, descend_final: 6.0, lift: 6.0}
+
+safety:                       # common.py: software limits on commanded motion
+  enabled: false              # false = NO workspace box, NO base-zone height rules, NO path checks, NO joint-step caps (IK feasibility still applies)
+  bounds: {x: [0.12, 0.60], y: [-0.45, 0.45], z_max: 0.42}
+  zone: {axis_xy: [-0.05, 0.0], radius: 0.35, margin: 0.03, height: 0.17}   # arm's own base protection zone
+  z_min_near_zone: 0.20
+  z_min_far_from_zone: -0.03

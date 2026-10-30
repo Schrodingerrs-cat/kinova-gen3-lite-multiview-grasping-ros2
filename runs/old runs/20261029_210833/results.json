@@ -1,0 +1,32 @@
+{
+ "run": "20261029_210833",
+ "status": "1 object(s) picked and put back from one observation",
+ "picked": 1,
+ "cycles": [
+  {
+   "object": 0,
+   "n_objects": 2,
+   "target": [
+    0.43522801062941713,
+    0.07324337914993534,
+    0.00278751053226713
+   ],
+   "status": "SKIPPED: gripper closed on nothing - not lifting"
+  },
+  {
+   "object": 1,
+   "n_objects": 2,
+   "target": [
+    0.41842919298179115,
+    -0.3311647649880299,
+    0.020741633266475247
+   ],
+   "status": "PICK + LIFT + RELEASE COMPLETE (place_back)"
+  },
+  {
+   "object": 2,
+   "n_objects": null,
+   "status": "NO_MORE_OBJECTS"
+  }
+ ]
+}

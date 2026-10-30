@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+# scratch folders the pipeline refills on every run
+scans/
+figures/
+pointclouds/
+scan_plan_preview/
+grasp.json
+plan.json
+objects.json
+object_cloud.npy
+# runs: only the demo run is kept
+runs/*
+!runs/old runs/
+runs/old runs/*
+!runs/old runs/20261029_210833/
