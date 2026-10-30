@@ -19,6 +19,7 @@ from robot_ros import Robot, COLOR, DEPTH, INFO   # noqa: E402
 
 from cfg import CFG as _CFG   # noqa: E402
 
+STALL_S = 6.0                # a camera grab that gets no frame for this long counts as a stall
 GRIP_CLOSED = 0.81           # finger joint (rad) of a fully closed, empty gripper, measured in the air (0 = open)
 SPEED = float(_CFG.get('motion', {}).get('speed_factor', 1.0))
 _S = _CFG['safety']
@@ -155,9 +156,12 @@ def BaseClient(router):
 
 
 class D405:
-    """Camera through the realsense2_camera topics; a background thread keeps frames arriving (and can record them)."""
+    """Camera through the realsense2_camera topics.
 
-    def __init__(self):
+    Default (on demand): subscribes only while grab() is running, so idle nodes do not pull full-rate video through DDS.
+    continuous=True: keeps the colour stream (and depth with depth=True) subscribed on a background thread, for video recording."""
+
+    def __init__(self, continuous=False, depth=True):
         if not rclpy.ok():
             rclpy.init()
         self.node = Node(f'hw7_camera_{next(_NODE_IDS)}')
@@ -165,17 +169,30 @@ class D405:
         self._ex.add_node(self.node)
         self._lock, self._color, self._depth, self._seq, self._writer = threading.Lock(), None, None, 0, None
         self.K, self.dist = None, np.zeros(5)
-        self.node.create_subscription(Image, COLOR, self._on_color, qos_profile_sensor_data)
-        self.node.create_subscription(Image, DEPTH, self._on_depth, qos_profile_sensor_data)
-        self.node.create_subscription(CameraInfo, INFO, self._on_info, qos_profile_sensor_data)
-        self._stop = False
-        self._th = threading.Thread(target=self._spin, daemon=True)
-        self._th.start()
-        t0 = time.time()
-        while (self.K is None or self._color is None or self._depth is None) and time.time() - t0 < 15:
-            time.sleep(0.05)
-        if self.K is None or self._color is None or self._depth is None:
-            raise RuntimeError('no camera frames: is realsense2_camera running with align_depth.enable:=true ?')
+        self.continuous, self._want_depth, self._subs = continuous, depth, []
+        if continuous:
+            self._subscribe(depth)
+            self._stop = False
+            self._th = threading.Thread(target=self._spin, daemon=True)
+            self._th.start()
+            t0 = time.time()
+            while self._color is None and time.time() - t0 < 15:
+                time.sleep(0.05)
+            if self._color is None:
+                raise RuntimeError('no camera frames: is realsense2_camera running with align_depth.enable:=true ?')
+
+    def _subscribe(self, depth=True):
+        with self._lock:
+            self._color, self._depth, self._seq = None, None, 0
+        self._subs = [self.node.create_subscription(Image, COLOR, self._on_color, qos_profile_sensor_data)]
+        if depth:
+            self._subs.append(self.node.create_subscription(Image, DEPTH, self._on_depth, qos_profile_sensor_data))
+            self._subs.append(self.node.create_subscription(CameraInfo, INFO, self._on_info, qos_profile_sensor_data))
+
+    def _unsubscribe(self):
+        for s in self._subs:
+            self.node.destroy_subscription(s)
+        self._subs = []
 
     def _spin(self):
         while not self._stop and rclpy.ok():
@@ -198,20 +215,34 @@ class D405:
             self._depth = d
 
     def grab(self, warmup=10):
-        """(color BGR, depth metres) after `warmup` new frames."""
-        with self._lock:
-            target = self._seq + max(1, warmup)
-        t0 = time.time()
-        while time.time() - t0 < 30:
+        """(color BGR, depth metres) after `warmup` new colour frames."""
+        if self.continuous:
             with self._lock:
-                if self._seq >= target:
-                    break
-            time.sleep(0.02)
+                target = self._seq + max(1, warmup)
+            t0 = time.time()
+            while time.time() - t0 < STALL_S:
+                with self._lock:
+                    if self._seq >= target:
+                        break
+                time.sleep(0.02)
+            else:
+                raise RuntimeError(f'camera stalled: no frames for {STALL_S:.0f} s')
+            time.sleep(0.05)
         else:
-            raise RuntimeError('camera stalled: no frames for 30 s')
-        time.sleep(0.05)
+            self._subscribe(True)
+            try:
+                t0 = time.time()
+                while True:
+                    self._ex.spin_once(timeout_sec=0.05)
+                    with self._lock:
+                        if self._seq >= max(1, warmup) and self._depth is not None and self.K is not None:
+                            break
+                    if time.time() - t0 > STALL_S:
+                        raise RuntimeError(f'camera stalled: no frames for {STALL_S:.0f} s')
+            finally:
+                self._unsubscribe()
         with self._lock:
-            return self._color.copy(), self._depth.copy()
+            return self._color.copy(), (self._depth.copy() if self._depth is not None else None)
 
     def start_recording(self, path, fps=15):
         import cv2
@@ -227,8 +258,9 @@ class D405:
 
     def close(self):
         self.stop_recording()
-        self._stop = True
-        self._th.join(timeout=2)
+        if self.continuous:
+            self._stop = True
+            self._th.join(timeout=2)
         self.node.destroy_node()
 
 

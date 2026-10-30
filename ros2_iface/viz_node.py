@@ -73,6 +73,17 @@ class Viz:
         self.pubs = {n: node.create_publisher(PointCloud2, f'/hw7/{n}', LATCHED) for n in topics}
         self.grasp_pub = node.create_publisher(MarkerArray, '/hw7/grasp', LATCHED) if grasp else None
 
+    def clear(self):
+        """Publish empty clouds / delete all markers so RViz drops whatever an earlier run left on the latched topics."""
+        now = self.node.get_clock().now().to_msg()
+        for name, pub in self.pubs.items():
+            pub.publish(cloud_msg(np.zeros((0, 3)), np.zeros((0, 3)), now))
+        if self.grasp_pub:
+            m = Marker()
+            m.header = Header(frame_id=FRAME, stamp=now)
+            m.action = Marker.DELETEALL
+            self.grasp_pub.publish(MarkerArray(markers=[m]))
+
     def cloud(self, name, xyz, rgb):
         if len(xyz) and name in self.pubs:
             xyz, rgb = thin(xyz, rgb)

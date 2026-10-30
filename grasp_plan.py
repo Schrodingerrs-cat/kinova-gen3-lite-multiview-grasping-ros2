@@ -20,7 +20,7 @@ P = dict(
 
 from cfg import section as _section
 P.update(_section('grasp'))
-P['max_joint_deg'] = joint_cap(P['max_joint_deg'])
+P['max_joint_deg'] = float(P.get('plan_max_joint_deg', 110.0))      # always applied, also when the software safety flag is off
 
 
 def build(g, T_start, tip_offset=None, table_z=None, tilt_deg=0.0, flip=False):

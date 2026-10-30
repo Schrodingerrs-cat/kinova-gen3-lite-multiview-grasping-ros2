@@ -106,21 +106,25 @@ class Robot(Node):
         vel = (30 * s**2 - 60 * s**3 + 30 * s**4) / duration
         self.send_joint_path([q0 + (q1 - q0) * p for p in pos], [0.05 + duration * x for x in s], [(q1 - q0) * v for v in vel])
 
-    def ik(self, T, seed_deg=None, timeout=0.2):
-        """Joint angles (deg) for the tool pose T (4x4, base frame), or None."""
-        req = GetPositionIK.Request(); r = req.ik_request
-        r.group_name, r.ik_link_name, r.avoid_collisions = GROUP, TOOL, False
-        r.timeout = Duration(sec=0, nanosec=int(timeout * 1e9))
-        r.pose_stamped = self._pose(T)
-        st = RobotState(); st.joint_state.name = JOINTS
-        st.joint_state.position = [float(v) for v in (self.q if seed_deg is None else np.radians(seed_deg))]
-        r.robot_state = st
-        fut = self.ik_srv.call_async(req); self.spin_until(fut.done, 5.0)
-        res = fut.result()
-        if res is None or res.error_code.val != MoveItErrorCodes.SUCCESS:
-            return None
-        d = dict(zip(res.solution.joint_state.name, res.solution.joint_state.position))
-        return np.degrees([d[j] for j in JOINTS])
+    def ik(self, T, seed_deg=None, timeout=0.5, tries=3):
+        """Joint angles (deg) for the tool pose T (4x4, base frame), or None. MoveIt's solver is randomized, so it is retried."""
+        for _ in range(tries):
+            req = GetPositionIK.Request()
+            r = req.ik_request
+            r.group_name, r.ik_link_name, r.avoid_collisions = GROUP, TOOL, False
+            r.timeout = Duration(sec=0, nanosec=int(timeout * 1e9))
+            r.pose_stamped = self._pose(T)
+            st = RobotState()
+            st.joint_state.name = JOINTS
+            st.joint_state.position = [float(v) for v in (self.q if seed_deg is None else np.radians(seed_deg))]
+            r.robot_state = st
+            fut = self.ik_srv.call_async(req)
+            self.spin_until(fut.done, 5.0)
+            res = fut.result()
+            if res is not None and res.error_code.val == MoveItErrorCodes.SUCCESS:
+                d = dict(zip(res.solution.joint_state.name, res.solution.joint_state.position))
+                return np.degrees([d[j] for j in JOINTS])
+        return None
 
     def _pose(self, T):
         ps = PoseStamped(); ps.header.frame_id = BASE

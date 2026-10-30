@@ -1,10 +1,11 @@
 """Keeps the realsense2_camera streams running: the node publishes the aligned depth only while somebody is subscribed, and it can take a while to start.
-Holds the subscriptions for the whole run (re-creating them if no frames arrive) and writes a flag file once colour + aligned depth are flowing."""
+Holds the subscriptions for the whole run (restarting itself if no frames arrive) and writes a flag file once colour + aligned depth are flowing."""
 import os
 import sys
 import time
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
@@ -39,10 +40,10 @@ try:
             if not os.path.exists(FLAG):
                 open(FLAG, 'w').write('ok')
         elif time.time() - t_sub > RETRY_S:
-            for s in subs:
-                n.destroy_subscription(s)
-            subs, t_sub = subscribe(n, cnt), time.time()
-            print('no frames yet: re-subscribed', flush=True)
+            print('no frames yet: restarting this process', flush=True)       # a new DDS participant recovers; re-subscribing in this one does not
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+except (KeyboardInterrupt, ExternalShutdownException):
+    pass
 finally:
     if os.path.exists(FLAG):
         os.remove(FLAG)

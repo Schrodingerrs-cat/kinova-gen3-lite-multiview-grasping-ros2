@@ -90,6 +90,7 @@ grasp:                        # Step 4 planning (grasp_plan.py)
   pre_grasp_height: 0.10      # m above the grasp point
   lift_height: 0.12
   max_joint_deg: 60.0
+  plan_max_joint_deg: 110      # the plan check rejects any pose chain that needs a bigger single-joint move (applies even with safety off)
 
 pick_all:                     # several objects: scan the table, pick one, place it at a free spot, rescan, repeat
   max_objects: 4

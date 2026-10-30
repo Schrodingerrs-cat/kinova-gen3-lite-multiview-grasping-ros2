@@ -22,6 +22,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_srvs.srv import Trigger
 
@@ -63,6 +64,7 @@ class StageNode(Node):
         for p, default in params:
             self.declare_parameter(p, default)
         self.viz = Viz(self, clouds, grasp)
+        self.viz.clear()
         self.create_service(Trigger, service, self._wrap(handler))
         self.get_logger().info(f'{service} ready')
 
@@ -152,10 +154,10 @@ ROLES = {'scan': ScanNode, 'perception': PerceptionNode, 'planner': PlannerNode,
 
 def main():
     rclpy.init()
-    node = ROLES[sys.argv[1]]()
     try:
+        node = ROLES[sys.argv[1]]()
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):      # the launch file stops the nodes when the run ends
         pass
 
 

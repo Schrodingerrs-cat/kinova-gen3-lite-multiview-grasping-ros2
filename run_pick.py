@@ -155,7 +155,7 @@ def main():
         if os.path.exists(CAMERA_FLAG):
             break
         time.sleep(1)
-    cam = D405()
+    cam = D405(continuous=True, depth=False)
     cam.start_recording(f'{run}/video/wrist_camera.mp4')
     try:
         observe_once(st, run)
