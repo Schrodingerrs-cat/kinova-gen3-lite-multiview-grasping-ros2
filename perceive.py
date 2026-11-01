@@ -8,7 +8,8 @@ import matplotlib
 matplotlib.use('Agg')
 import os as _os
 import mpl_toolkits
-mpl_toolkits.__path__.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(matplotlib.__file__)), 'mpl_toolkits'))
+if hasattr(mpl_toolkits.__path__, 'insert'):    # a namespace package (newer matplotlib in a venv) has no insert and needs no fix
+    mpl_toolkits.__path__.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(matplotlib.__file__)), 'mpl_toolkits'))
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import numpy as np

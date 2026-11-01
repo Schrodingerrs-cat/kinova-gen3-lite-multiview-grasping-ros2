@@ -20,6 +20,9 @@ DUR = _E['durations_s']
 PLACE_EXTRA = float(_E.get('place_extra_height_m', 0.04))
 REFINE_MAX_JOINT_DEG = float(_E.get('refine_max_joint_deg', 70.0))
 RELEASE = _E.get('release', 'none')           # place_back | drop | none
+VISION_CHECK = bool(_E.get('vision_grasp_check', False))   # rescue: when the finger position says "empty", lift and let the wrist camera decide
+VISION_TIP_MAX = float(_E.get('vision_tip_max_m', 0.20))     # depth between the fingertips below this = something is there
+VISION_MARGIN = float(_E.get('vision_margin_m', 0.08))       # and the table in the image corners must be this much farther away
 
 
 class GraspAbort(RuntimeError):
@@ -64,6 +67,12 @@ def refine_grasp(base, cam, X, g):
     ring = (r > rad) & (r < rad + 0.07) & (np.abs(h) < 0.02)         # bare table around the object
     plane_z = -(plane[0] * mid[0] + plane[1] * mid[1] + plane[3]) / plane[2]
     if ring.sum() < 300:
+        near = (r > rad) & (r < rad + 0.07)
+        if near.any():
+            print(f'   diagnostic: {len(pb)} close-range points, {int(near.sum())} in the table ring, of which {int(ring.sum())} within 20 mm of the far-range plane; '
+                  f'median height of the ring points above that plane {np.median(h[near]) * 1000:+.0f} mm', flush=True)
+        else:
+            print(f'   diagnostic: {len(pb)} close-range points but none in the table ring (ring outside the camera view or no valid depth)', flush=True)
         raise GraspAbort(f'close-range check: only {ring.sum()} table points around the object')
     table_local = float(np.median(pb[ring, 2]))
     print(f'   local table height {table_local:.4f} m (plane fit said {plane_z:.4f}, diff {(table_local - plane_z) * 1000:.1f} mm)', flush=True)
@@ -92,6 +101,21 @@ def refine_grasp(base, cam, X, g):
     print(f'   close-range grasp ({res["method"]}): grasp point ({res["mid"][0]:.4f}, {res["mid"][1]:.4f}) '
           f'(far-range grasp point was ({mid[0]:.4f}, {mid[1]:.4f}))', flush=True)
     return res, table_local, c_close - c_far
+
+
+def object_in_hand(cam):
+    """Wrist camera check, valid only after the lift. The camera rides on the gripper, so a held object stays at a fixed
+    distance from the lens (about 0.11 m between the fingertips) while the table in the image corners moves away.
+    Returns (held, depth between the tips, depth of the table). Anything unreadable counts as not held."""
+    _, depth = cam.grab(warmup=6)
+
+    def median(r0, r1, c0, c1):
+        d = depth[r0:r1, c0:c1]
+        d = d[(d > 0.05) & (d < 1.5)]
+        return float(np.median(d)) if len(d) > 200 else float('nan')
+    tips = median(400, 480, 340, 510)
+    table = float(np.nanmedian([median(320, 480, 0, 255), median(320, 480, 595, 848)]))
+    return bool(tips < VISION_TIP_MAX and table - tips > VISION_MARGIN), tips, table
 
 
 def main(cam=None, media_dir=None):
@@ -157,12 +181,24 @@ def main(cam=None, media_dir=None):
             contact = stalled or pos < GRIP_EMPTY
             print(f'   gripper closed to {pos:.2f}, contact={contact}', flush=True)
             snap('13_gripper_closed')
-            if not contact:
+            if not contact and not VISION_CHECK:
                 raise GraspAbort('gripper closed on nothing - not lifting')
+            if not contact:
+                print('   finger position reads empty; thin objects held at the soft fingertips look like that, so lifting and letting the wrist camera decide', flush=True)
             go(base, 'lift', *poses['lift'], duration=DUR['lift'], q_deg=rows['lift'][5])
             snap('14_after_lift')
             held = grip_pos(base)
-            print(f'   after lift gripper at {held:.2f} (was {pos:.2f}) -> {"HOLDING" if abs(held - pos) < 0.12 else "LOST?"}', flush=True)
+            if contact:
+                print(f'   after lift gripper at {held:.2f} (was {pos:.2f}) -> {"HOLDING" if abs(held - pos) < 0.12 else "LOST?"}', flush=True)
+            else:
+                in_hand, tips, table = object_in_hand(cam)
+                print(f'   wrist camera after the lift: depth between the fingertips {tips:.3f} m, table {table:.3f} m -> '
+                      f'{"HOLDING" if in_hand else "NOTHING IN THE GRIPPER"}', flush=True)
+                if not in_hand:
+                    go(base, 'lower to the table (nothing held)', poses['grasp'][0] + np.array([0, 0, 0.003]), poses['grasp'][1], duration=DUR['descend_final'])
+                    grip_ramp(base, 0.0, rate=0.25)
+                    go(base, 'retreat up', *poses['lift'], duration=DUR['lift'])
+                    raise GraspAbort('closed on nothing: the wrist camera sees no object between the fingertips after the lift')
             time.sleep(3.0)
             plan = json.load(open('plan.json'))
             if plan.get('place'):

@@ -107,6 +107,7 @@ execution:                    # grasp_exec.py
   place_extra_height_m: 0.04  # carry the object this much higher than the normal lift
   max_correction_m: 0.08      # abort only if the close-range centre differs from the far-range plan by more than this (the dense close-range view is the more accurate one)
   pos_tol_m: 0.006            # abort if a move ends farther than this from its target
+  vision_grasp_check: true    # rescue when the finger position reads empty: lift, then the wrist camera decides if an object is held (thin or small objects look empty to the fingers)
   release: place_back         # after the lift: place_back (lower to the table, open, retreat) | drop (open at the lift height) | none (keep holding)
   grip_empty: 0.975           # settled gripper position above this = closed on nothing
   durations_s: {pre_grasp_refined: 3.0, descend_stage1: 4.0, descend_final: 6.0, lift: 6.0}

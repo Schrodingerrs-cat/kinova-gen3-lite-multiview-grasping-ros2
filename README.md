@@ -64,6 +64,22 @@ The service response message is JSON `{"info": ..., "log": ...}`. Works for any 
   export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
   ```
 
+### Second laptop: read this before the first run
+
+On a laptop other than the original, three host settings decided whether the pipeline worked, and the symptoms look like hardware
+faults (`camera stalled: no frames for 4 s`, a repeating `No controller active in LOW_LEVEL_SERVOING mode !`, a camera that stalls
+at 10 FPS). Put these lines in `~/.bashrc`, or `source tools/ros_env.sh` in every ROS terminal, then close all ROS terminals and
+run `ros2 daemon stop`:
+
+```bash
+export ROS_LOCALHOST_ONLY=1
+export CYCLONEDDS_URI='<CycloneDDS><Domain><Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>120</MaxAutoParticipantIndex></Discovery></Domain></CycloneDDS>'
+```
+
+Every terminal must have the same settings. Also: the D405 must link at USB 3.x (`rs-enumerate-devices | grep "Usb Type"`), and the
+gripper should be open before a run (`.venv/bin/python tools/open_gripper.py`). Full explanations, measurements and fixes are in
+[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
+
 ## Run it, terminal by terminal
 
 Keep the e-stop in reach and the workspace clear. Open each terminal in the repo folder and start them in this order.
@@ -94,7 +110,9 @@ Without the robot you can still look at a saved run: `.venv/bin/python ros2_ifac
 | driver crashes with `RefreshFeedback` timeout / `sendto() failed ... 101` | the arm's USB link dropped (`ip -o link` shows no `enx...`); reseat the cable, rerun `./start_arm.sh`, restart the driver |
 | `ROBOT_IN_FAULT` / arm refuses to move | clear the fault from the arm's web page (`http://192.168.1.10`) or power-cycle the arm, then restart the driver |
 | `ros2 control list_controllers` hangs | the driver is not running, or on a different DDS |
-| camera stalls / low frame rate | use a USB 3 port and cable |
+| camera stalls / low frame rate | use a USB 3 port and cable (`rs-enumerate-devices \| grep "Usb Type"` must say 3.x) |
+| `camera stalled: no frames for 4 s`, or `No controller active in LOW_LEVEL_SERVOING mode !` | DDS settings, see "Second laptop" above and `docs/TROUBLESHOOTING.md` sections 3.1 and 3.2 |
+| `closed on nothing - not lifting` although the object was held | thin or small objects look empty to the finger position; the wrist-camera check (`execution.vision_grasp_check`) handles it, see section 3.7 |
 
 Calibration (`calibration/hand_eye.json`) is the camera-to-tool transform; the scan views and home pose are in `calibration/table_views.json` and `calibration/scan_joints.json`. The tools that made them (Kortex API) are in `archive/`.
 
@@ -112,6 +130,8 @@ run_ros.sh            ros2 launch of the whole pipeline
 run_pick.py           orchestrator node
 scan.py perceive.py grasp_plan.py grasp_exec.py     stage code used by the nodes
 common.py cfg.py      ROS arm/camera/gripper helpers, config loader
+tools/                ros_env.sh (DDS settings), open_gripper.py, gripper_probe.py, flight_recorder.py, analyze_flight.py (gripper diagnostics, see docs/TROUBLESHOOTING.md)
+docs/                 the two course PDFs and TROUBLESHOOTING.md (setup on another laptop, failure modes, fixes, measurements)
 ros2_iface/           hw7_nodes.py (the 4 stage nodes), launch/pick.launch.py, robot_ros.py (joint states, TF, FollowJointTrajectory, MoveIt IK/Cartesian path, gripper, camera topics), keepalive.py, viz_node.py + hw7.rviz, smoke_test.py
 calibration/          hand_eye.json, table_views.json, scan_joints.json (home pose; old ones commented), tag_in_base.json, tip_offset_measured.json
 runs/old runs/<ts>/   one demo run: video, point clouds, figures, per-step images, log

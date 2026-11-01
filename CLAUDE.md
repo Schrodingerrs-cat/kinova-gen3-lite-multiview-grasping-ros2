@@ -34,3 +34,50 @@ Flow: `/hw7/scan` once → for each object k: `/hw7/perceive` (target=k) → `/h
 - The camera node publishes aligned depth only while the raw depth topic is also subscribed, so `ros2_iface/keepalive.py` (started by the launch file) holds those subscriptions.
 - The old `viewpoints.planner` block in `config.yaml` is unused. The scan is 10 fixed views from `calibration/table_views.json` (5 straight-down sweep, 5 oblique). Earlier Kortex-only tools (hand-eye calibration, make_views, report) are in `archive/`.
 - ROS: every terminal needs the same `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`; the camera node only publishes aligned depth while subscribed, so `run_ros.sh` starts `ros2_iface/keepalive.py` first; the arm's USB link dropping crashes the driver (`RefreshFeedback` timeout).
+
+## Host requirements and failure triage (read before debugging a failed run)
+
+Most failures seen when porting this repo to a second laptop were host problems that look like hardware faults. Details, measurements and
+fixes are in `docs/TROUBLESHOOTING.md`; this section is the short version for an assistant.
+
+Required on every machine, in EVERY terminal (identical settings, or nodes cannot see each other; measured 0.0 Hz when they differ):
+
+```bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_LOCALHOST_ONLY=1
+export CYCLONEDDS_URI='<CycloneDDS><Domain><Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>120</MaxAutoParticipantIndex></Discovery></Domain></CycloneDDS>'
+```
+
+`tools/ros_env.sh` sets them. After changing them, every ROS terminal must be restarted and `ros2 daemon stop` run. Never edit `~/.bashrc` for the user
+without asking; give them the lines.
+
+Triage order when something fails. Do these before touching code or concluding that a cable or the camera is faulty:
+
+1. `camera stalled: no frames for 4 s (3 tries)` with a camera that shows up in `lsusb` and in `ros2 topic hz`: DDS settings (section 3.1). Check
+   the environment of the RUNNING processes with `tr '\0' '\n' < /proc/<pid>/environ | grep -E 'ROS_LOCALHOST_ONLY|CYCLONEDDS_URI'`.
+2. Repeating `No controller active in LOW_LEVEL_SERVOING mode !`: the controller spawners died, usually the participant-index limit (3.2). Look at
+   `~/.ros/log/<newest>/launch.log` for `Failed to find a free participant index`.
+3. D405 slow, 10 FPS or `Frames didn't arrived`: `rs-enumerate-devices | grep "Usb Type"` must say 3.x (3.3). A USB disconnect/reconnect pair in
+   `journalctl -k` usually means the camera node was restarted, not a cable fault.
+4. RViz arm in the wrong pose: the driver is not running, only `start_arm.sh` is (3.5). The orange arm is the MoveIt query goal state. Never press Plan
+   or Plan & Execute there.
+5. Gripper `contact=False` although the object is held: see below.
+
+Facts about the gripper that are easy to get wrong:
+- The Gen3 Lite gripper is underactuated: the motor drives only the proximal finger links, the distal segments are passive. The only channel reported
+  for the finger is POSITION (about 990 Hz). Velocity is always exactly 0.0 and effort is nan. Do not build a stall test on velocity or effort.
+- The position reading is about 1.00 both for an empty closed gripper and for a thin or small object held at the tips. So `contact = pos < GRIP_EMPTY`
+  gives false negatives for objects narrower than about 40 mm. `grasp_exec.py` therefore has a rescue: when the finger check says empty, it lifts and
+  `object_in_hand(cam)` decides from the wrist camera (depth between the fingertips below 0.20 m and the table in the lower corners more than 0.08 m
+  farther). The camera check is only valid AFTER a lift. Switch: `execution.vision_grasp_check` in `config.yaml`. Runs where the finger check already
+  reports contact are unchanged.
+- Start runs with the gripper open (`.venv/bin/python tools/open_gripper.py`). A run that started with it closed aborted once with `only 41 table points
+  around the object`; the mechanism is unproven but opening first removed it.
+- Thin cables (about 10 mm) are outside what the pipeline can grasp, because the close-range cloud keeps only points above `perception.min_height` (12 mm).
+
+Diagnostic tools (`tools/`, none of them moves the arm): `open_gripper.py`, `gripper_probe.py`, `flight_recorder.py` (passive, run it beside a normal run),
+`analyze_flight.py`. Do not use `pgrep -f` or `pkill -f` with a pattern that also occurs in your own command line, it kills your own shell; use
+`ps -eo pid=,args=` and kill by PID. Do not actuate the gripper or the arm without the user's go-ahead.
+
+Local changes relative to the original repo: `perceive.py` (matplotlib guard), `grasp_exec.py` (vision rescue and a `diagnostic:` line), `config.yaml`
+(`vision_grasp_check`), plus `tools/` and `docs/TROUBLESHOOTING.md`.

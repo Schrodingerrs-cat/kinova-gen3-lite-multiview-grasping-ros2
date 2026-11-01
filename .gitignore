@@ -18,3 +18,5 @@ runs/old runs/*
 !runs/20261029_211609/
 !runs/20261030_130017/
 runs/20261030_130017/RVIZ_RECORDING.webm
+# recordings written by tools/ (gripper probe, flight recorder)
+tools/results/
